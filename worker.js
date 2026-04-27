@@ -20,7 +20,7 @@ const LEAGUE_IDS = [
 
 const BASE = 'https://v3.football.api-sports.io';
 const TTL = 60 * 60 * 14;
-const BATCH = 8;
+const BATCH = 3; // conservador para evitar 429s da API-Football
 
 async function batchAll(items, fn, size = BATCH, delay = 200) {
   const results = [];
@@ -49,7 +49,7 @@ async function fetchFixturesAndOdds(today, season, headers) {
         allOdds.push(...(od?.response || []));
       }
     } catch (e) { console.warn(`Fixtures/odds league ${lid}:`, e.message); }
-  }, BATCH, 300);
+  }, BATCH, 500); // 500ms entre batches — mais seguro para rate limits
   return { allFixtures, allOdds };
 }
 
