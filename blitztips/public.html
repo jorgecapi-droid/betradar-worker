@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="BlitzTips — Tips de futebol diárias com análise por IA. Grátis todos os dias.">
+<meta property="og:title" content="BlitzTips ⚡ Tips de Futebol Diárias">
+<meta property="og:description" content="Picks com inteligência artificial. Grátis todos os dias.">
+<title>BlitzTips ⚡ Tips de Futebol</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080c14;--surface:#0e1421;--surface2:#141c2e;--border:#1e2a40;--text:#e8edf5;--text2:#a0aec0;--muted:#5a6a82;--accent:#f5c400;--green:#00d68f;--red:#ff4757;--blue:#4da8ff}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");pointer-events:none;z-index:0;opacity:.4}
+/* AGE GATE */
+.age-gate{position:fixed;inset:0;background:rgba(8,12,20,.97);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(8px)}
+.age-gate.hidden{display:none}
+.age-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:32px 24px;max-width:360px;width:100%;text-align:center;animation:fadeUp .4s ease}
+.age-box-logo{font-family:'Bebas Neue',sans-serif;font-size:36px;letter-spacing:3px;color:var(--text);margin-bottom:4px}
+.age-box-bolt{color:var(--accent)}
+.age-box-badge{display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:var(--red);color:#fff;font-size:22px;font-weight:800;border-radius:14px;margin:16px auto;box-shadow:0 4px 20px rgba(255,71,87,.3)}
+.age-box-title{font-size:18px;font-weight:700;color:var(--text);margin-bottom:8px}
+.age-box-text{font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:24px}
+.age-btn-yes{width:100%;padding:14px;background:linear-gradient(135deg,#f5c400,#ff9500);color:#080c14;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:10px;font-family:'DM Sans',sans-serif;transition:all .2s}
+.age-btn-yes:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(245,196,0,.3)}
+.age-btn-no{width:100%;padding:12px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .2s}
+.age-btn-no:hover{border-color:var(--red);color:var(--red)}
+.age-hotline{margin-top:16px;font-size:10px;color:var(--muted)}
+.age-hotline a{color:var(--green);text-decoration:none}
+.container{max-width:680px;margin:0 auto;padding:0 16px;position:relative;z-index:1}
+.header{padding:28px 0 22px;text-align:center;border-bottom:1px solid var(--border);margin-bottom:20px;position:relative}
+.header::after{content:'';position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);width:80px;height:2px;background:var(--accent)}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:50px;letter-spacing:3px;line-height:1;color:var(--text);display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:6px}
+.logo-bolt{color:var(--accent);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.8;transform:scale(.95)}}
+.tagline{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-bottom:10px}
+.header-row{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap}
+.updated{display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);padding:4px 12px;border-radius:20px;font-size:11px;color:var(--text2);font-family:'DM Mono',monospace}
+.dot{width:6px;height:6px;background:var(--green);border-radius:50%;animation:blink 1.5s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.lang-toggle{display:inline-flex;background:var(--surface2);border:1px solid var(--border);border-radius:20px;overflow:hidden}
+.lang-btn{padding:4px 12px;cursor:pointer;border:none;background:transparent;color:var(--muted);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:700;transition:all .15s}
+.lang-btn.active{background:var(--accent);color:#080c14}
+.disclaimer{background:linear-gradient(135deg,rgba(245,196,0,.06),rgba(245,196,0,.02));border:1px solid rgba(245,196,0,.2);border-radius:12px;padding:12px 16px;margin-bottom:20px;font-size:11px;color:rgba(245,196,0,.8);text-align:center;line-height:1.6;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+.badge-18{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:var(--red);color:#fff;font-size:10px;font-weight:800;border-radius:6px;flex-shrink:0}
+.odds-warning{background:rgba(77,168,255,.06);border:1px solid rgba(77,168,255,.2);border-radius:10px;padding:8px 14px;margin-bottom:16px;font-size:10px;color:var(--text2);text-align:center;display:flex;align-items:center;justify-content:center;gap:6px}
+.affiliates-label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:2px;text-align:center;margin-bottom:10px}
+.affiliates-single{display:block;background:linear-gradient(135deg,#f5c400,#ff9500);color:#080c14;padding:14px 20px;border-radius:12px;text-align:center;font-weight:700;font-size:15px;text-decoration:none;margin-bottom:20px;box-shadow:0 4px 24px rgba(245,196,0,.25);transition:all .2s}
+.affiliates-single:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(245,196,0,.35)}
+.affiliates-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:20px}
+.aff-btn{display:flex;align-items:center;justify-content:center;gap:6px;background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:11px 14px;border-radius:10px;text-decoration:none;font-size:12px;font-weight:600;transition:all .2s}
+.aff-btn:hover{background:var(--surface);border-color:var(--accent);color:var(--accent);transform:translateY(-1px)}
+.tabs-wrapper{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:6px;margin-bottom:20px;overflow-x:auto;scrollbar-width:none}
+.tabs-wrapper::-webkit-scrollbar{display:none}
+.tabs{display:flex;gap:4px;min-width:max-content}
+.tab{flex-shrink:0;padding:9px 16px;background:transparent;border:none;color:var(--muted);font-size:12px;font-weight:600;border-radius:9px;cursor:pointer;white-space:nowrap;transition:all .2s;font-family:'DM Sans',sans-serif}
+.tab:hover{color:var(--text2);background:var(--surface2)}
+.tab.active{background:var(--accent);color:#080c14}
+.section-title{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.pick-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:10px;animation:fadeUp .3s ease both;transition:border-color .2s;position:relative;overflow:hidden}
+.pick-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),transparent);opacity:0;transition:opacity .2s}
+.pick-card:hover{border-color:rgba(245,196,0,.3)}
+.pick-card:hover::before{opacity:1}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.card-top{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+.card-rank{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--border);line-height:1;min-width:32px;text-align:center;transition:color .2s}
+.pick-card:hover .card-rank{color:var(--accent)}
+.card-info{flex:1;min-width:0}
+.card-match{font-size:14px;font-weight:700;color:var(--text);line-height:1.3;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-meta{font-size:10px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.card-odd{font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--accent);line-height:1;text-align:right;flex-shrink:0}
+.card-odd-note{font-size:8px;color:var(--muted);text-align:right;margin-top:2px}
+.card-bet{display:inline-flex;align-items:center;gap:6px;background:rgba(77,168,255,.08);border:1px solid rgba(77,168,255,.2);color:var(--blue);padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;margin-bottom:8px}
+.card-stats{display:flex;gap:8px;flex-wrap:wrap}
+.stat-pill{font-size:10px;font-family:'DM Mono',monospace;padding:3px 8px;border-radius:6px;font-weight:500}
+.stat-ev-pos{background:rgba(0,214,143,.1);color:var(--green);border:1px solid rgba(0,214,143,.2)}
+.stat-ev-neg{background:rgba(255,71,87,.1);color:var(--red);border:1px solid rgba(255,71,87,.2)}
+.stat-conf-high{background:rgba(245,196,0,.1);color:var(--accent);border:1px solid rgba(245,196,0,.2)}
+.stat-conf-mid{background:rgba(77,168,255,.08);color:var(--blue);border:1px solid rgba(77,168,255,.15)}
+.stat-conf-low{background:var(--surface2);color:var(--muted);border:1px solid var(--border)}
+.stat-prob{background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty-icon{font-size:36px;margin-bottom:10px}
+.skeleton{background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:8px;height:80px;margin-bottom:10px}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+/* CALCULADORA */
+.calc-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:20px}
+.calc-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.calc-legs{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.calc-leg{display:flex;align-items:center;gap:8px}
+.calc-leg-num{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);min-width:24px}
+.calc-input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:14px;font-family:'DM Mono',monospace;outline:none;transition:border-color .2s}
+.calc-input:focus{border-color:var(--accent)}
+.calc-input::placeholder{color:var(--muted)}
+.calc-remove{background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:4px;transition:color .2s}
+.calc-remove:hover{color:var(--red)}
+.calc-row{display:flex;gap:8px;margin-bottom:12px}
+.calc-btn{flex:1;padding:10px;background:rgba(245,196,0,.08);border:1px solid rgba(245,196,0,.2);color:var(--accent);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .2s}
+.calc-btn:hover{background:rgba(245,196,0,.15)}
+.calc-stake-row{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.calc-stake-label{font-size:12px;color:var(--text2);white-space:nowrap}
+.calc-stake{width:100px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:14px;font-family:'DM Mono',monospace;outline:none}
+.calc-stake:focus{border-color:var(--accent)}
+.calc-result{background:linear-gradient(135deg,rgba(245,196,0,.08),rgba(245,196,0,.02));border:1px solid rgba(245,196,0,.2);border-radius:12px;padding:14px;text-align:center}
+.calc-result-odd{font-family:'Bebas Neue',sans-serif;font-size:36px;color:var(--accent);letter-spacing:1px}
+.calc-result-row{display:flex;justify-content:center;gap:20px;margin-top:8px}
+.calc-result-item{text-align:center}
+.calc-result-val{font-size:16px;font-weight:700;color:var(--text)}
+.calc-result-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.calc-warning{background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:8px;padding:10px 14px;margin-top:12px;font-size:11px;color:rgba(255,71,87,.8);text-align:center;line-height:1.5}
+/* FOOTER */
+.footer{border-top:1px solid var(--border);padding:28px 0;margin-top:32px;text-align:center}
+.footer-logo{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:var(--muted);margin-bottom:10px}
+.footer-badges{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+.footer-badge{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:10px;font-weight:700;color:var(--muted)}
+.footer-badge-18{background:rgba(255,71,87,.1);border-color:rgba(255,71,87,.3);color:var(--red)}
+.footer-legal{font-size:10px;color:var(--muted);line-height:1.8;max-width:480px;margin:0 auto 12px}
+.footer-hotline{display:inline-flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);padding:6px 14px;border-radius:20px;font-size:11px;color:var(--text2);text-decoration:none;font-family:'DM Mono',monospace;transition:border-color .2s}
+.footer-hotline:hover{border-color:var(--green);color:var(--green)}
+.footer-divider{display:flex;align-items:center;gap:10px;margin:14px 0;color:var(--border);font-size:10px}
+.footer-divider::before,.footer-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+.multiples-warning{background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:rgba(255,71,87,.8);display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+@media(max-width:480px){.logo{font-size:42px}.card-odd{font-size:26px}.tab{padding:8px 12px;font-size:11px}}
+</style>
+</head>
+<body>
+<!-- AGE VERIFICATION GATE -->
+<div class="age-gate" id="age-gate">
+  <div class="age-box">
+    <div class="age-box-logo"><span class="age-box-bolt">⚡</span>BLITZTIPS<span class="age-box-bolt">⚡</span></div>
+    <div class="age-box-badge" id="age-badge">18+</div>
+    <div class="age-box-title" id="age-title">Tens 18 anos ou mais?</div>
+    <div class="age-box-text" id="age-text">Este site contém informação sobre apostas desportivas. O acesso é restrito a maiores de 18 anos. Ao entrares, confirmas que tens idade legal para apostar no teu país.</div>
+    <button class="age-btn-yes" onclick="ageConfirm(true)" id="age-btn-yes">✅ Sim, tenho 18 ou mais anos</button>
+    <button class="age-btn-no" onclick="ageConfirm(false)" id="age-btn-no">❌ Não, sou menor de idade</button>
+    <div class="age-hotline" id="age-hotline">Jogo responsável: <a href="tel:213950911" style="color:var(--green);text-decoration:none">213 950 911</a></div>
+  </div>
+</div>
+
+<div class="container">
+  <header class="header">
+    <div style="display:flex;justify-content:center;margin-bottom:6px">
+      <img src="logo.png" alt="BlitzTips" style="max-height:80px;width:auto">
+    </div>
+    <div class="tagline" id="tagline">Tips de Futebol com IA · Grátis Todos os Dias</div>
+    <div class="header-row">
+      <div class="updated"><span class="dot"></span><span id="updated-text">A carregar...</span></div>
+      <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('pt')" id="btn-pt">🇵🇹 PT</button>
+        <button class="lang-btn" onclick="setLang('en')" id="btn-en">🇬🇧 EN</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="disclaimer"><span class="badge-18">18+</span><span id="disclaimer-text">Apostas implicam risco. As tips são apenas informativas e não constituem aconselhamento financeiro. Resultados passados não garantem resultados futuros. Joga com responsabilidade.</span></div>
+
+  <div class="odds-warning">⚠️ <span id="odds-warning-text">Odds indicativas — podem variar. Verifica sempre na tua casa de apostas antes de apostar.</span></div>
+
+  <div id="affiliates-container"></div>
+
+  <div class="tabs-wrapper">
+    <div class="tabs" id="tabs-row">
+      <button class="tab active" data-tab="top15">🏆 Top 15</button>
+      <button class="tab" data-tab="h2h">⚽ 1X2</button>
+      <button class="tab" data-tab="totals">📊 O/U</button>
+      <button class="tab" data-tab="btts">🥅 BTTS</button>
+      <button class="tab" data-tab="combo">🔗 DC+</button>
+      <button class="tab" data-tab="half">⚡ 1/2+</button>
+      <button class="tab" data-tab="corners">🚩 Cantos</button>
+      <button class="tab" data-tab="ht">⏱ Intervalo</button>
+      <button class="tab" data-tab="calc">🧮 Calculadora</button>
+    </div>
+  </div>
+
+  <div id="content">
+    <div class="skeleton"></div>
+    <div class="skeleton" style="height:70px;opacity:.7"></div>
+    <div class="skeleton" style="height:70px;opacity:.4"></div>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-logo">⚡ BLITZTIPS</div>
+    <div class="footer-badges">
+      <a href="https://www.srij.turismodeportugal.pt" target="_blank" rel="noopener" style="display:inline-flex;align-items:center">
+        <img src="18mais.png" alt="18+" style="height:32px;width:auto">
+      </a>
+      <a href="https://www.srij.turismodeportugal.pt" target="_blank" rel="noopener" style="display:inline-flex;align-items:center">
+        <img src="srij.png" alt="SRIJ" style="height:32px;width:auto">
+      </a>
+      <a href="https://www.icad.pt" target="_blank" rel="noopener" style="display:inline-flex;align-items:center">
+        <img src="icad.png" alt="ICAD" style="height:32px;width:auto">
+      </a>
+      <a href="https://www.jogarmelhor.pt" target="_blank" rel="noopener" class="footer-badge" style="text-decoration:none">🎯 Jogo Responsável</a>
+    </div>
+    <div class="footer-divider" id="footer-rg-label">JOGO RESPONSÁVEL</div>
+    <div class="footer-legal" id="footer-legal">A BlitzTips fornece análise estatística e conteúdo informativo apenas. Todas as tips são geradas por um algoritmo de IA e não constituem aconselhamento financeiro, jurídico ou de apostas. Podemos receber comissões através de links de afiliados. As apostas podem criar dependência — joga com responsabilidade. As odds apresentadas são meramente indicativas e podem variar nas casas de apostas.</div>
+    <div style="margin-bottom:12px"><a class="footer-hotline" href="tel:213950911">🟢 Linha de Apoio ao Jogador: 213 950 911</a></div>
+    <div style="font-size:10px;color:var(--muted)" id="footer-copy">© 2025 BlitzTips · Apenas para fins informativos · Maiores de 18 anos</div>
+  </footer>
+</div>
+
+<script>
+const WORKER_URL='https://betradar-proxy.jorge-capilupi.workers.dev';
+let DATA=null,ANALYSIS=null,currentTab='top15',lang='pt';
+
+const T={
+  pt:{
+    tagline:'Tips de Futebol com IA · Grátis Todos os Dias',
+    loading:'A carregar...',offline:'Offline',
+    disclaimer:'Apostas implicam risco. As tips são apenas informativas e não constituem aconselhamento financeiro. Resultados passados não garantem resultados futuros. Joga com responsabilidade.',
+    oddsWarning:'Odds indicativas — podem variar. Verifica sempre na tua casa de apostas antes de apostar.',
+    affLabel:'🇵🇹 Casas de apostas legais em Portugal',
+    affSingle:n=>`🎯 Apostar na ${n} →`,
+    tabs:{top15:'🏆 Top 15',h2h:'⚽ 1X2',totals:'📊 O/U',btts:'🥅 BTTS',combo:'🔗 DC+',half:'⚡ 1/2+',corners:'🚩 Cantos',ht:'⏱ Intervalo',calc:'🧮 Calculadora'},
+    tabLabels:{top15:'🏆 Top 15 do Dia',h2h:'⚽ Picks 1X2',totals:'📊 Over / Under',btts:'🥅 Ambas Marcam',combo:'🔗 Dupla Chance +',half:'⚡ 1/2 + Over/Under/BTTS',corners:'🚩 Cantos',ht:'⏱ Intervalo'},
+    emptyText:'Sem picks para este mercado hoje.<br>Tenta outro separador ou volta mais tarde.',
+    noData:'Sem dados disponíveis.<br>Volta mais tarde — actualizamos todas as manhãs.',
+    updatedAt:d=>'Actualizado '+d.toLocaleDateString('pt-PT',{weekday:'short',day:'numeric',month:'short'})+' às '+d.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'}),
+    prob:'prob',
+    rgLabel:'JOGO RESPONSÁVEL',
+    legal:'A BlitzTips fornece análise estatística e conteúdo informativo apenas. Todas as tips são geradas por um algoritmo de IA e não constituem aconselhamento financeiro, jurídico ou de apostas. Podemos receber comissões através de links de afiliados. As apostas podem criar dependência — joga com responsabilidade. As odds apresentadas são meramente indicativas e podem variar nas casas de apostas.',
+    copy:'© 2025 BlitzTips · Apenas para fins informativos · Maiores de 18 anos',
+    ageTitle:'Tens 18 anos ou mais?',
+    ageText:'Este site contém informação sobre apostas desportivas. O acesso é restrito a maiores de 18 anos. Ao entrares, confirmas que tens idade legal para apostar no teu país.',
+    ageBtnYes:'✅ Sim, tenho 18 ou mais anos',
+    ageBtnNo:'❌ Não, sou menor de idade',
+    ageHotline:'Jogo responsável:',
+    multiplesWarning:'⚠️ As apostas múltiplas combinam o risco de cada selecção. Quanto mais selecções, maior o risco de perda total. Aposte com responsabilidade.',
+    calcTitle:'🧮 Calculadora de Múltiplas',
+    calcAddLeg:'+ Adicionar selecção',
+    calcStake:'Valor apostado (€)',
+    calcTotalOdd:'Odd Total',
+    calcReturn:'Retorno Potencial',
+    calcProfit:'Lucro Potencial',
+  },
+  en:{
+    tagline:'AI-Powered Football Tips · Free Every Day',
+    loading:'Loading...',offline:'Offline',
+    disclaimer:'Gambling involves risk. Tips are for informational purposes only and do not constitute financial advice. Past results do not guarantee future outcomes. Please gamble responsibly.',
+    oddsWarning:'Indicative odds — may vary. Always verify at your bookmaker before betting.',
+    affLabel:'🇵🇹 Licensed bookmakers in Portugal',
+    affSingle:n=>`🎯 Bet on ${n} →`,
+    tabs:{top15:'🏆 Top 15',h2h:'⚽ 1X2',totals:'📊 O/U',btts:'🥅 BTTS',combo:'🔗 DC+',half:'⚡ 1/2+',corners:'🚩 Corners',ht:'⏱ HT',calc:'🧮 Calculator'},
+    tabLabels:{top15:'🏆 Top 15 Today',h2h:'⚽ 1X2 Picks',totals:'📊 Over / Under',btts:'🥅 Both Teams Score',combo:'🔗 Double Chance +',half:'⚡ 1/2 + Over/Under/BTTS',corners:'🚩 Corner Picks',ht:'⏱ Half Time'},
+    emptyText:'No picks found for this market today.<br>Try another tab or check back later.',
+    noData:'No picks available yet.<br>Check back soon — we update every morning.',
+    updatedAt:d=>'Updated '+d.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})+' at '+d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}),
+    prob:'prob',
+    rgLabel:'RESPONSIBLE GAMBLING',
+    legal:'BlitzTips provides statistical analysis and informational content only. All tips are generated by an AI algorithm and do not constitute financial, legal, or betting advice. We may receive commissions from affiliate links. Betting can be addictive — please play responsibly. Odds shown are indicative and may vary at bookmakers.',
+    copy:'© 2025 BlitzTips · For entertainment purposes only · 18+ only',
+    ageTitle:'Are you 18 or older?',
+    ageText:'This site contains sports betting information. Access is restricted to adults aged 18+. By entering, you confirm you are of legal gambling age in your country.',
+    ageBtnYes:'✅ Yes, I am 18 or older',
+    ageBtnNo:'❌ No, I am underage',
+    ageHotline:'Responsible gambling:',
+    multiplesWarning:'⚠️ Multiple bets combine the risk of each selection. The more selections, the higher the risk of total loss. Please gamble responsibly.',
+    calcTitle:'🧮 Accumulator Calculator',
+    calcAddLeg:'+ Add selection',
+    calcStake:'Stake (€)',
+    calcTotalOdd:'Total Odds',
+    calcReturn:'Potential Return',
+    calcProfit:'Potential Profit',
+  }
+};
+
+const affMeta={betclic:{name:'Betclic',flag:'🇵🇹'},betano:{name:'Betano',flag:'🇵🇹'},bwin:{name:'Bwin',flag:'🇵🇹'},solverde:{name:'Solverde',flag:'🇵🇹'},esc:{name:'ESC Online',flag:'🇵🇹'},luckia:{name:'Luckia',flag:'🇵🇹'},placard:{name:'Placard',flag:'🇵🇹'},moosh:{name:'Moosh',flag:'🇵🇹'},nossaaposta:{name:'Nossa Aposta',flag:'🇵🇹'}};
+
+// ── Age gate ──────────────────────────────────────────────────────
+function ageConfirm(yes){
+  if(yes){localStorage.setItem('blitztips_age','1');document.getElementById('age-gate').classList.add('hidden');}
+  else{window.location.href='https://www.google.com';}
+}
+function checkAge(){if(localStorage.getItem('blitztips_age')==='1'){document.getElementById('age-gate').classList.add('hidden');}}
+
+// ── Language ──────────────────────────────────────────────────────
+function setLang(l){
+  lang=l;localStorage.setItem('blitztips_lang',l);
+  document.getElementById('btn-pt').classList.toggle('active',l==='pt');
+  document.getElementById('btn-en').classList.toggle('active',l==='en');
+  document.querySelector('.tagline').textContent=T[l].tagline;
+  document.getElementById('disclaimer-text').textContent=T[l].disclaimer;
+  document.getElementById('odds-warning-text').textContent=T[l].oddsWarning;
+  document.getElementById('footer-rg-label').textContent=T[l].rgLabel;
+  document.getElementById('footer-legal').textContent=T[l].legal;
+  document.getElementById('footer-copy').textContent=T[l].copy;
+  document.querySelectorAll('.tab').forEach(t=>{t.textContent=T[l].tabs[t.dataset.tab]||t.dataset.tab;});
+  const al=document.querySelector('.affiliates-label');if(al)al.textContent=T[l].affLabel;
+  document.getElementById('age-title').textContent=T[l].ageTitle;
+  document.getElementById('age-text').textContent=T[l].ageText;
+  document.getElementById('age-btn-yes').textContent=T[l].ageBtnYes;
+  document.getElementById('age-btn-no').textContent=T[l].ageBtnNo;
+  document.getElementById('age-hotline').innerHTML=T[l].ageHotline+' <a href="tel:213950911" style="color:var(--green);text-decoration:none">213 950 911</a>';
+  if(currentTab!=='calc')renderTab(currentTab);
+}
+
+// ── Affiliates ────────────────────────────────────────────────────
+function buildAffiliates(affs){
+  const keys=Object.keys(affs||{}).filter(k=>affs[k]);
+  const c=document.getElementById('affiliates-container');
+  if(!keys.length){c.innerHTML='';return;}
+  if(keys.length===1){const k=keys[0],m=affMeta[k]||{name:k,flag:''};c.innerHTML=`<a class="affiliates-single" href="${affs[k]}" target="_blank" rel="noopener sponsored">${m.flag} ${T[lang].affSingle(m.name)}</a>`;}
+  else{const btns=keys.map(k=>{const m=affMeta[k]||{name:k,flag:''};return`<a class="aff-btn" href="${affs[k]}" target="_blank" rel="noopener sponsored">${m.flag} ${m.name}</a>`;}).join('');c.innerHTML=`<div class="affiliates-label">${T[lang].affLabel}</div><div class="affiliates-grid">${btns}</div>`;}
+}
+
+// ── Data processing from Worker ───────────────────────────────────
+function processWorkerData(fixtures,odds){
+  // Build odds map
+  const oddsMap={};
+  (odds||[]).forEach(item=>{const id=item.fixture?.id;if(id)oddsMap[id]=item.bookmakers||[];});
+
+  const picks=[];
+  (fixtures||[]).forEach(f=>{
+    const fid=f.fixture?.id;
+    const home=f.teams?.home?.name;
+    const away=f.teams?.away?.name;
+    const lid=f._lid;
+    const date=f.fixture?.date;
+    const leagueName=f.league?.name||'';
+    const country=f.league?.country||'';
+    if(!home||!away||!fid)return;
+
+    const bms=oddsMap[fid]||[];
+    if(!bms.length)return;
+
+    // Extract odds from bookmakers
+    let homeOdd=0,drawOdd=0,awayOdd=0,over25=0,under25=0,bttsY=0,bttsN=0;
+    for(const bk of bms){
+      for(const bet of (bk.bets||[])){
+        const bn=bet.name||'';
+        if((bet.id===1||bn==='Match Winner')&&!homeOdd){
+          const vs=bet.values||[];
+          homeOdd=parseFloat(vs.find(v=>v.value==='Home')?.odd)||0;
+          drawOdd=parseFloat(vs.find(v=>v.value==='Draw')?.odd)||0;
+          awayOdd=parseFloat(vs.find(v=>v.value==='Away')?.odd)||0;
+        }
+        if((bet.id===5||bn.includes('Over/Under'))&&!over25){
+          const vs=bet.values||[];
+          const ov=vs.find(v=>v.value==='Over 2.5');
+          const un=vs.find(v=>v.value==='Under 2.5');
+          if(ov)over25=parseFloat(ov.odd)||0;
+          if(un)under25=parseFloat(un.odd)||0;
+        }
+        if((bet.id===8||bn==='Both Teams Score')&&!bttsY){
+          const vs=bet.values||[];
+          bttsY=parseFloat(vs.find(v=>v.value==='Yes')?.odd)||0;
+          bttsN=parseFloat(vs.find(v=>v.value==='No')?.odd)||0;
+        }
+      }
+    }
+    if(!homeOdd)return;
+
+    const time=date?new Date(date).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Lisbon'}):null;
+    const league=leagueName+(country&&country!=='World'?` ${countryFlag(country)}`:'');
+    const base={home,away,league,time,fid};
+
+    // 1X2
+    if(homeOdd>1){picks.push({...base,marketType:'h2h',bet:`Vitória ${home}`,odd:homeOdd,ev:calcEV(homeOdd),confidence:5,prob:Math.round(100/homeOdd)});}
+    if(drawOdd>1){picks.push({...base,marketType:'h2h',bet:'Empate',odd:drawOdd,ev:calcEV(drawOdd),confidence:4,prob:Math.round(100/drawOdd)});}
+    if(awayOdd>1){picks.push({...base,marketType:'h2h',bet:`Vitória ${away}`,odd:awayOdd,ev:calcEV(awayOdd),confidence:5,prob:Math.round(100/awayOdd)});}
+    // O/U
+    if(over25>1){picks.push({...base,marketType:'totals',bet:'Over 2.5',odd:over25,ev:calcEV(over25),confidence:5,prob:Math.round(100/over25)});}
+    if(under25>1){picks.push({...base,marketType:'totals',bet:'Under 2.5',odd:under25,ev:calcEV(under25),confidence:5,prob:Math.round(100/under25)});}
+    // BTTS
+    if(bttsY>1){picks.push({...base,marketType:'btts',bet:'Ambas Marcam ✓',odd:bttsY,ev:calcEV(bttsY),confidence:5,prob:Math.round(100/bttsY)});}
+    if(bttsN>1){picks.push({...base,marketType:'btts',bet:'Ambas Marcam ✗',odd:bttsN,ev:calcEV(bttsN),confidence:5,prob:Math.round(100/bttsN)});}
+    // DC
+    if(homeOdd>1&&drawOdd>1){const o=parseFloat((1/(1/homeOdd+1/drawOdd)).toFixed(2));picks.push({...base,marketType:'combo',bet:`1X`,odd:o,ev:calcEV(o),confidence:6,prob:Math.round(100/o)});}
+    if(awayOdd>1&&drawOdd>1){const o=parseFloat((1/(1/awayOdd+1/drawOdd)).toFixed(2));picks.push({...base,marketType:'combo',bet:`X2`,odd:o,ev:calcEV(o),confidence:6,prob:Math.round(100/o)});}
+    // 1/2 + O/U
+    if(homeOdd>1&&awayOdd>1&&over25>1){
+      const p12=1/homeOdd+1/awayOdd;
+      const o=parseFloat((1/(p12*(1/over25))).toFixed(2));
+      if(o>1.05&&o<20)picks.push({...base,marketType:'half',bet:`1/2 + Over 2.5`,odd:o,ev:calcEV(o),confidence:5,prob:Math.round(100/o)});
+    }
+    if(homeOdd>1&&awayOdd>1&&under25>1){
+      const p12=1/homeOdd+1/awayOdd;
+      const o=parseFloat((1/(p12*(1/under25))).toFixed(2));
+      if(o>1.05&&o<20)picks.push({...base,marketType:'half',bet:`1/2 + Under 2.5`,odd:o,ev:calcEV(o),confidence:5,prob:Math.round(100/o)});
+    }
+    if(homeOdd>1&&awayOdd>1&&bttsY>1){
+      const p12=1/homeOdd+1/awayOdd;
+      const o=parseFloat((1/(p12*(1/bttsY))).toFixed(2));
+      if(o>1.05&&o<20)picks.push({...base,marketType:'half',bet:`1/2 + BTTS ✓`,odd:o,ev:calcEV(o),confidence:5,prob:Math.round(100/o)});
+    }
+  });
+
+  picks.sort((a,b)=>b.confidence-a.confidence||(b.ev-a.ev));
+
+  return{
+    top15:picks.filter(p=>p.odd>=1.50&&p.odd<=3.50&&p.confidence>=5).slice(0,15),
+    markets:{
+      h2h:picks.filter(p=>p.marketType==='h2h').slice(0,20),
+      totals:picks.filter(p=>p.marketType==='totals').slice(0,20),
+      btts:picks.filter(p=>p.marketType==='btts').slice(0,20),
+      combo:picks.filter(p=>p.marketType==='combo').slice(0,20),
+      half:picks.filter(p=>p.marketType==='half').slice(0,20),
+      corners:[],ht:[],
+    },
+    generatedAt:new Date().toISOString(),
+    affiliates:{},
+  };
+}
+
+function calcEV(odd){return Math.round((odd-1/odd*odd)*10)/10;}
+function countryFlag(c){const m={'Portugal':'🇵🇹','England':'🏴󠁧󠁢󠁥󠁮󠁧󠁿','Spain':'🇪🇸','Germany':'🇩🇪','France':'🇫🇷','Italy':'🇮🇹','Netherlands':'🇳🇱','Belgium':'🇧🇪','Turkey':'🇹🇷','Brazil':'🇧🇷','Argentina':'🇦🇷','Mexico':'🇲🇽','USA':'🇺🇸','Scotland':'🏴󠁧󠁢󠁳󠁣󠁴󠁿'};return m[c]||'';}
+
+// ── Load data ─────────────────────────────────────────────────────
+async function load(){
+  try{
+    const [rd,ra]=await Promise.all([
+      fetch(WORKER_URL+'/data'),
+      fetch(WORKER_URL+'/analysis'),
+    ]);
+    if(!rd.ok)throw new Error('data');
+    const workerData=await rd.json();
+    if(workerData.status==='fetching'){
+      document.getElementById('updated-text').textContent='A preparar dados...';
+      setTimeout(load,30000);return;
+    }
+    DATA=processWorkerData(workerData.fixtures,workerData.odds);
+    // Enrich with analysis data if available
+    if(ra.ok){
+      const analysis=await ra.json();
+      if(analysis&&analysis.status!=='not_ready'){
+        enrichWithAnalysis(DATA,analysis);
+      }
+    }
+    document.getElementById('updated-text').textContent=T[lang].updatedAt(new Date(workerData.fetchedAt));
+    buildAffiliates(DATA.affiliates||{});
+    if(currentTab!=='calc')renderTab(currentTab);
+  }catch(e){
+    document.getElementById('content').innerHTML=`<div class="empty"><div class="empty-icon">📡</div><div class="empty-text">${T[lang].noData}</div></div>`;
+    document.getElementById('updated-text').textContent=T[lang].offline;
+  }
+}
+
+function enrichWithAnalysis(data,analysis){
+  // Update confidence scores using form and H2H data
+  const enrich=(picks)=>picks.forEach(p=>{
+    const hTid=analysis.formData?Object.entries(analysis.formData).find(([,d])=>d.name===p.home)?.[0]:null;
+    const aTid=analysis.formData?Object.entries(analysis.formData).find(([,d])=>d.name===p.away)?.[0]:null;
+    if(hTid&&aTid){
+      const hForm=analysis.formData[hTid]?.form||[];
+      const aForm=analysis.formData[aTid]?.form||[];
+      if(hForm.length>2){
+        const hScore=hForm.slice(-5).reduce((s,r)=>s+(r==='W'?1:r==='L'?-1:0),0)/5;
+        p.confidence=Math.min(10,Math.max(1,p.confidence+Math.round(hScore)));
+      }
+    }
+  });
+  enrich(data.top15);
+  Object.values(data.markets).forEach(m=>enrich(m));
+  data.top15.sort((a,b)=>b.confidence-a.confidence);
+}
+
+// ── Render ────────────────────────────────────────────────────────
+function renderTab(tab){
+  currentTab=tab;
+  if(tab==='calc'){renderCalc();return;}
+  if(!DATA){document.getElementById('content').innerHTML='<div class="skeleton"></div>';return;}
+  const picks=tab==='top15'?DATA.top15:(DATA.markets[tab]||[]);
+  const c=document.getElementById('content');
+  const isMultiples=false;
+  let html=`<div class="section-title">${T[lang].tabLabels[tab]||tab}</div>`;
+  if(!picks||!picks.length){c.innerHTML=html+`<div class="empty"><div class="empty-icon">🔍</div><div class="empty-text">${T[lang].emptyText}</div></div>`;return;}
+  c.innerHTML=html+picks.map((p,i)=>buildCard(p,i)).join('');
+}
+
+function buildCard(p,i){
+  const delay=Math.min(i*0.05,0.5).toFixed(2);
+  const evClass=p.ev>0?'stat-ev-pos':'stat-ev-neg';
+  const mktIcon={h2h:'⚽',totals:'📊',btts:'🥅',combo:'🔗',half:'⚡',corners:'🚩',ht:'⏱'}[p.marketType]||'🎯';
+  const confClass=p.confidence>=7?'stat-conf-high':p.confidence>=5?'stat-conf-mid':'stat-conf-low';
+  return`<div class="pick-card" style="animation-delay:${delay}s">
+    <div class="card-top">
+      <div class="card-rank">${String(i+1).padStart(2,'0')}</div>
+      <div class="card-info">
+        <div class="card-match">${p.home} vs ${p.away}</div>
+        <div class="card-meta"><span>${p.league||''}</span>${p.time?`<span style="color:var(--border)">·</span><span>${p.time}</span>`:''}</div>
+      </div>
+      <div>
+        <div class="card-odd">@${parseFloat(p.odd).toFixed(2)}</div>
+        <div class="card-odd-note">indicativa</div>
+      </div>
+    </div>
+    <div class="card-bet">${mktIcon} ${p.bet}</div>
+    <div class="card-stats">
+      <span class="stat-pill ${evClass}">EV ${p.ev>0?'+':''}${p.ev}%</span>
+      <span class="stat-pill ${confClass}">⭐ ${p.confidence}/10</span>
+      <span class="stat-pill stat-prob">${p.prob}% ${T[lang].prob}</span>
+    </div>
+  </div>`;
+}
+
+// ── Calculadora de Múltiplas ──────────────────────────────────────
+let calcLegs=[1.80,2.10];
+function renderCalc(){
+  currentTab='calc';
+  const c=document.getElementById('content');
+  c.innerHTML=`
+    <div class="calc-box">
+      <div class="calc-title">${T[lang].calcTitle}</div>
+      <div class="multiples-warning">${T[lang].multiplesWarning}</div>
+      <div class="calc-legs" id="calc-legs"></div>
+      <div class="calc-row">
+        <button class="calc-btn" onclick="addCalcLeg()">+ ${T[lang].calcAddLeg||'Adicionar selecção'}</button>
+      </div>
+      <div class="calc-stake-row">
+        <span class="calc-stake-label">💶 ${T[lang].calcStake||'Valor (€)'}:</span>
+        <input class="calc-stake" type="number" id="calc-stake" value="10" min="0.01" step="0.5" oninput="updateCalc()">
+      </div>
+      <div class="calc-result" id="calc-result"></div>
+    </div>`;
+  renderCalcLegs();
+  updateCalc();
+}
+
+function renderCalcLegs(){
+  const el=document.getElementById('calc-legs');
+  if(!el)return;
+  el.innerHTML=calcLegs.map((odd,i)=>`
+    <div class="calc-leg">
+      <span class="calc-leg-num">${i+1}.</span>
+      <input class="calc-input" type="number" value="${odd}" min="1.01" step="0.01" placeholder="Odd (ex: 1.75)" oninput="updateLeg(${i},this.value)">
+      ${calcLegs.length>2?`<button class="calc-remove" onclick="removeLeg(${i})">✕</button>`:'<span style="width:28px"></span>'}
+    </div>`).join('');
+}
+
+function addCalcLeg(){calcLegs.push(2.00);renderCalcLegs();updateCalc();}
+function removeLeg(i){if(calcLegs.length<=2)return;calcLegs.splice(i,1);renderCalcLegs();updateCalc();}
+function updateLeg(i,v){calcLegs[i]=parseFloat(v)||1;updateCalc();}
+function updateCalc(){
+  const result=document.getElementById('calc-result');
+  const stakeEl=document.getElementById('calc-stake');
+  if(!result||!stakeEl)return;
+  const stake=parseFloat(stakeEl.value)||10;
+  const validOdds=calcLegs.filter(o=>o>1);
+  if(!validOdds.length){result.innerHTML='<div style="color:var(--muted);font-size:12px">Introduz as odds das tuas selecções</div>';return;}
+  const totalOdd=validOdds.reduce((a,b)=>a*b,1);
+  const ret=stake*totalOdd;
+  const profit=ret-stake;
+  result.innerHTML=`
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">${validOdds.length} selecç${validOdds.length===1?'ão':'ões'}</div>
+    <div class="calc-result-odd">@${totalOdd.toFixed(2)}</div>
+    <div class="calc-result-row">
+      <div class="calc-result-item"><div class="calc-result-val">€${ret.toFixed(2)}</div><div class="calc-result-lbl">${T[lang].calcReturn||'Retorno'}</div></div>
+      <div class="calc-result-item"><div class="calc-result-val" style="color:var(--green)">€${profit.toFixed(2)}</div><div class="calc-result-lbl">${T[lang].calcProfit||'Lucro'}</div></div>
+    </div>`;
+}
+
+// ── Tab events ────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    renderTab(t.dataset.tab);
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+});
+
+// ── Init ──────────────────────────────────────────────────────────
+const savedLang=localStorage.getItem('blitztips_lang')||'pt';
+if(savedLang!=='pt')setLang(savedLang);
+checkAge();
+load();
+setInterval(load,5*60*1000);
+</script>
+</body>
+</html>
