@@ -1,6 +1,8 @@
-// BetRadar Cloudflare Worker — Full Analysis Backend
-// Cron 3x/dia: busca fixtures, odds, forma, H2H, stats, standings, previsões
-// Cliente lê tudo do KV — zero prefetch, carregamento instantâneo
+// BetRadar Cloudflare Worker — Full Analysis Backend v2
+// Cron 5x/dia: 7h, 11h, 12h, 16h, 17h UTC
+// 11h e 16h = lineup runs (só actualiza lineups)
+// Dados: fixtures, odds, forma (20j), H2H+BTTS, stats+golos por período,
+//        standings, previsões, lesões, stats avançadas, lineups, transfers, árbitros
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -16,11 +18,12 @@ const LEAGUE_IDS = [
   141, 137, 48, 218, 197, 119, 113, 207, 106, 283,
   103, 345, 271, 210, 333, 384, 357, 332, 172, 164,
   244, 239, 240, 281, 268, 285, 269,
+  188, 193, 195, 192, 196, 19,
 ];
 
 const BASE = 'https://v3.football.api-sports.io';
 const TTL = 60 * 60 * 14;
-const BATCH = 3; // conservador para evitar 429s da API-Football
+const BATCH = 3;
 
 async function batchAll(items, fn, size = BATCH, delay = 200) {
   const results = [];
@@ -48,8 +51,8 @@ async function fetchFixturesAndOdds(today, season, headers) {
         const od = await ro.json();
         allOdds.push(...(od?.response || []));
       }
-    } catch (e) { console.warn(`Fixtures/odds league ${lid}:`, e.message); }
-  }, BATCH, 500); // 500ms entre batches — mais seguro para rate limits
+    } catch (e) { console.warn(`Fixtures/odds ${lid}:`, e.message); }
+  }, BATCH, 500);
   return { allFixtures, allOdds };
 }
 
@@ -64,10 +67,10 @@ async function fetchTeamForms(fixtures, season, headers) {
     if (aId && aName) teams.set(aId, { id: aId, name: aName, lid });
   });
   const teamList = [...teams.values()];
-  console.log(`Fetching form for ${teamList.length} teams...`);
+  console.log(`Form for ${teamList.length} teams...`);
   await batchAll(teamList, async ({ id, name, lid }) => {
     try {
-      const r = await fetch(`${BASE}/fixtures?team=${id}&league=${lid}&season=${season}&last=10&status=FT`, { headers });
+      const r = await fetch(`${BASE}/fixtures?team=${id}&league=${lid}&season=${season}&last=20&status=FT`, { headers });
       if (!r.ok) return;
       const d = await r.json();
       const fl = d?.response || [];
@@ -82,12 +85,12 @@ async function fetchTeamForms(fixtures, season, headers) {
       });
       formData[id] = {
         name, tid: id,
-        form: formAll.reverse().slice(0, 5),
-        formHome: formHome.reverse().slice(0, 5),
-        formAway: formAway.reverse().slice(0, 5),
+        form: formAll.reverse().slice(0, 10),
+        formHome: formHome.reverse().slice(0, 10),
+        formAway: formAway.reverse().slice(0, 10),
         recentFixtures: fl.slice(0, 3).map(f => f.fixture?.id).filter(Boolean),
       };
-    } catch (e) { console.warn(`Form team ${id}:`, e.message); }
+    } catch (e) { console.warn(`Form ${id}:`, e.message); }
   }, BATCH, 200);
   return formData;
 }
@@ -103,7 +106,7 @@ async function fetchH2HData(fixtures, headers) {
     }
   });
   const pairList = [...pairs.values()];
-  console.log(`Fetching H2H for ${pairList.length} pairs...`);
+  console.log(`H2H for ${pairList.length} pairs...`);
   await batchAll(pairList, async ({ key, hId, aId }) => {
     try {
       const r = await fetch(`${BASE}/fixtures/headtohead?h2h=${hId}-${aId}&last=10`, { headers });
@@ -111,15 +114,16 @@ async function fetchH2HData(fixtures, headers) {
       const d = await r.json();
       const matches = d?.response || [];
       if (!matches.length) return;
-      let t1w = 0, t2w = 0, draws = 0, over25 = 0;
+      let t1w = 0, t2w = 0, draws = 0, over25 = 0, btts = 0;
       matches.forEach(m => {
         const gh = m.goals.home ?? 0, ga = m.goals.away ?? 0;
         if (gh + ga > 2.5) over25++;
+        if (gh > 0 && ga > 0) btts++;
         if (gh === ga) draws++;
         else if (m.teams.home.id === hId ? gh > ga : ga > gh) t1w++;
         else t2w++;
       });
-      h2hData[key] = { total: matches.length, team1wins: t1w, team2wins: t2w, draws, over25 };
+      h2hData[key] = { total: matches.length, team1wins: t1w, team2wins: t2w, draws, over25, btts };
     } catch (e) { console.warn(`H2H ${key}:`, e.message); }
   }, BATCH, 200);
   return h2hData;
@@ -130,12 +134,11 @@ async function fetchTeamStats(fixtures, season, headers) {
   const requests = new Map();
   fixtures.forEach(f => {
     const lid = f._lid;
-    const hId = f.teams?.home?.id, aId = f.teams?.away?.id;
-    if (hId) requests.set(`${hId}_${lid}`, { tid: hId, lid });
-    if (aId) requests.set(`${aId}_${lid}`, { tid: aId, lid });
+    if (f.teams?.home?.id) requests.set(`${f.teams.home.id}_${lid}`, { tid: f.teams.home.id, lid });
+    if (f.teams?.away?.id) requests.set(`${f.teams.away.id}_${lid}`, { tid: f.teams.away.id, lid });
   });
   const reqList = [...requests.entries()].map(([key, val]) => ({ key, ...val }));
-  console.log(`Fetching team stats for ${reqList.length} combos...`);
+  console.log(`Stats for ${reqList.length} combos...`);
   await batchAll(reqList, async ({ key, tid, lid }) => {
     try {
       const r = await fetch(`${BASE}/teams/statistics?team=${tid}&league=${lid}&season=${season}`, { headers });
@@ -143,6 +146,8 @@ async function fetchTeamStats(fixtures, season, headers) {
       const d = await r.json();
       const s = d?.response;
       if (!s) return;
+      const gfMin = s.goals?.for?.minute || {};
+      const gaMin = s.goals?.against?.minute || {};
       statsData[key] = {
         goalsForAvgHome: parseFloat(s.goals?.for?.average?.home) || 0,
         goalsForAvgAway: parseFloat(s.goals?.for?.average?.away) || 0,
@@ -155,6 +160,10 @@ async function fetchTeamStats(fixtures, season, headers) {
         cleanSheetsAway: s.clean_sheet?.away || 0,
         playedHome: s.fixtures?.played?.home || 0,
         playedAway: s.fixtures?.played?.away || 0,
+        goalsFor1H: (gfMin['0-15']?.total||0)+(gfMin['16-30']?.total||0)+(gfMin['31-45']?.total||0),
+        goalsFor2H: (gfMin['46-60']?.total||0)+(gfMin['61-75']?.total||0)+(gfMin['76-90']?.total||0),
+        goalsAgainst1H: (gaMin['0-15']?.total||0)+(gaMin['16-30']?.total||0)+(gaMin['31-45']?.total||0),
+        goalsAgainst2H: (gaMin['46-60']?.total||0)+(gaMin['61-75']?.total||0)+(gaMin['76-90']?.total||0),
       };
     } catch (e) { console.warn(`Stats ${key}:`, e.message); }
   }, BATCH, 200);
@@ -164,7 +173,7 @@ async function fetchTeamStats(fixtures, season, headers) {
 async function fetchStandings(fixtures, season, headers) {
   const standingsData = {};
   const leaguesWithGames = [...new Set(fixtures.map(f => f._lid))];
-  console.log(`Fetching standings for ${leaguesWithGames.length} leagues...`);
+  console.log(`Standings for ${leaguesWithGames.length} leagues...`);
   await batchAll(leaguesWithGames, async (lid) => {
     try {
       const r = await fetch(`${BASE}/standings?league=${lid}&season=${season}`, { headers });
@@ -179,9 +188,9 @@ async function fetchStandings(fixtures, season, headers) {
           played: t.all?.played || 0,
           w: t.all?.win || 0, d: t.all?.draw || 0, l: t.all?.lose || 0,
           gf: t.all?.goals?.for || 0, ga: t.all?.goals?.against || 0,
-          home: { played: t.home?.played || 0, w: t.home?.win || 0, d: t.home?.draw || 0, l: t.home?.lose || 0 },
-          away: { played: t.away?.played || 0, w: t.away?.win || 0, d: t.away?.draw || 0, l: t.away?.lose || 0 },
-          name: t.team.name,
+          home: { played: t.home?.played||0, w: t.home?.win||0, d: t.home?.draw||0, l: t.home?.lose||0 },
+          away: { played: t.away?.played||0, w: t.away?.win||0, d: t.away?.draw||0, l: t.away?.lose||0 },
+          name: t.team.name, form: t.form || '',
         };
       });
       standingsData[`${lid}_${season}`] = table;
@@ -193,7 +202,7 @@ async function fetchStandings(fixtures, season, headers) {
 async function fetchPredictionsAndInjuries(fixtures, headers) {
   const predData = {}, injData = {};
   const fids = fixtures.map(f => f.fixture?.id).filter(Boolean);
-  console.log(`Fetching predictions+injuries for ${fids.length} fixtures...`);
+  console.log(`Predictions+injuries for ${fids.length} fixtures...`);
   await batchAll(fids, async (fid) => {
     try {
       const [rp, ri] = await Promise.all([
@@ -205,8 +214,7 @@ async function fetchPredictionsAndInjuries(fixtures, headers) {
         const p = dp?.response?.[0];
         if (p) predData[fid] = {
           winPct: { home: p.predictions?.percent?.home, away: p.predictions?.percent?.away, draw: p.predictions?.percent?.draw },
-          underOver: p.predictions?.under_over,
-          advice: p.predictions?.advice,
+          underOver: p.predictions?.under_over, advice: p.predictions?.advice,
         };
       }
       if (ri.ok) {
@@ -221,12 +229,12 @@ async function fetchPredictionsAndInjuries(fixtures, headers) {
 async function fetchAdvancedStats(formData, headers) {
   const advData = {};
   const teamList = Object.entries(formData).filter(([, d]) => d.recentFixtures?.length);
-  console.log(`Fetching advanced stats for ${teamList.length} teams...`);
+  console.log(`Advanced stats for ${teamList.length} teams...`);
   await batchAll(teamList, async ([tid, data]) => {
     try {
       const fids = data.recentFixtures.slice(0, 3);
-      let shotsOn = 0, shotsTotal = 0, possession = 0, corners = 0, n = 0;
-      let cornersHome = 0, cornersAway = 0, nHome = 0, nAway = 0;
+      let shotsOn=0, shotsTotal=0, possession=0, corners=0, n=0;
+      let cornersHome=0, cornersAway=0, nHome=0, nAway=0;
       await Promise.all(fids.map(async (fid) => {
         try {
           const [rs, rf] = await Promise.all([
@@ -237,65 +245,142 @@ async function fetchAdvancedStats(formData, headers) {
           const ds = await rs.json();
           const stats = ds?.response?.[0]?.statistics || [];
           const get = (t) => stats.find(s => s.type === t)?.value;
-          const sOn = parseInt(get('Shots on Goal')) || 0;
-          const sTotal = parseInt(get('Total Shots')) || 0;
-          const poss = parseInt((get('Ball Possession') || '0%').replace('%', '')) || 0;
-          const corn = parseInt(get('Corner Kicks')) || 0;
-          shotsOn += sOn; shotsTotal += sTotal; possession += poss; corners += corn; n++;
+          const sOn = parseInt(get('Shots on Goal'))||0;
+          const sTotal = parseInt(get('Total Shots'))||0;
+          const poss = parseInt((get('Ball Possession')||'0%').replace('%',''))||0;
+          const corn = parseInt(get('Corner Kicks'))||0;
+          shotsOn+=sOn; shotsTotal+=sTotal; possession+=poss; corners+=corn; n++;
           if (rf.ok) {
             const df = await rf.json();
             const isHome = df?.response?.[0]?.teams?.home?.id === parseInt(tid);
-            if (isHome) { cornersHome += corn; nHome++; } else { cornersAway += corn; nAway++; }
+            if (isHome){cornersHome+=corn;nHome++;}else{cornersAway+=corn;nAway++;}
           }
         } catch {}
       }));
-      if (n > 0) {
-        advData[tid] = {
-          name: data.name,
-          shotsOnAvg: parseFloat((shotsOn / n).toFixed(1)),
-          shotsTotalAvg: parseFloat((shotsTotal / n).toFixed(1)),
-          possessionAvg: parseFloat((possession / n).toFixed(0)),
-          cornersAvg: parseFloat((corners / n).toFixed(1)),
-          cornersHomeAvg: nHome > 0 ? parseFloat((cornersHome / nHome).toFixed(1)) : null,
-          cornersAwayAvg: nAway > 0 ? parseFloat((cornersAway / nAway).toFixed(1)) : null,
-          xgFromShots: parseFloat(((shotsOn / n) * 0.33).toFixed(2)),
-          games: n,
-        };
-      }
-    } catch (e) { console.warn(`Advanced stats team ${tid}:`, e.message); }
+      if (n>0) advData[tid] = {
+        name: data.name,
+        shotsOnAvg: parseFloat((shotsOn/n).toFixed(1)),
+        shotsTotalAvg: parseFloat((shotsTotal/n).toFixed(1)),
+        possessionAvg: parseFloat((possession/n).toFixed(0)),
+        cornersAvg: parseFloat((corners/n).toFixed(1)),
+        cornersHomeAvg: nHome>0?parseFloat((cornersHome/nHome).toFixed(1)):null,
+        cornersAwayAvg: nAway>0?parseFloat((cornersAway/nAway).toFixed(1)):null,
+        xgFromShots: parseFloat(((shotsOn/n)*0.33).toFixed(2)),
+        games: n,
+      };
+    } catch (e) { console.warn(`Adv stats ${tid}:`, e.message); }
   }, 4, 300);
   return advData;
 }
 
-async function runCron(env) {
+async function fetchLineups(fixtures, headers) {
+  const lineupData = {};
+  const fids = fixtures.map(f => f.fixture?.id).filter(Boolean);
+  console.log(`Lineups for ${fids.length} fixtures...`);
+  await batchAll(fids, async (fid) => {
+    try {
+      const r = await fetch(`${BASE}/fixtures/lineups?fixture=${fid}`, { headers });
+      if (!r.ok) return;
+      const d = await r.json();
+      const lineups = d?.response || [];
+      if (!lineups.length) return;
+      lineupData[fid] = lineups.map(t => ({
+        team: t.team?.name, teamId: t.team?.id, formation: t.formation,
+        startXI: (t.startXI||[]).map(p => ({ name: p.player?.name, number: p.player?.number, pos: p.player?.pos })),
+        substitutes: (t.substitutes||[]).map(p => ({ name: p.player?.name, pos: p.player?.pos })),
+      }));
+    } catch (e) { console.warn(`Lineups ${fid}:`, e.message); }
+  }, 5, 200);
+  return lineupData;
+}
+
+async function fetchTransfers(fixtures, headers) {
+  const transferData = {};
+  const teams = new Map();
+  fixtures.forEach(f => {
+    if (f.teams?.home?.id) teams.set(f.teams.home.id, f.teams.home.name);
+    if (f.teams?.away?.id) teams.set(f.teams.away.id, f.teams.away.name);
+  });
+  const teamList = [...teams.entries()];
+  console.log(`Transfers for ${teamList.length} teams...`);
+  const now = new Date();
+  const cutoff = new Date(now); cutoff.setMonth(cutoff.getMonth()-3);
+  const cutoffStr = cutoff.toISOString().slice(0,10);
+  await batchAll(teamList, async ([tid, name]) => {
+    try {
+      const r = await fetch(`${BASE}/transfers?team=${tid}`, { headers });
+      if (!r.ok) return;
+      const d = await r.json();
+      const transfers = (d?.response||[]).filter(t => {
+        const date = t.transfers?.[0]?.date;
+        return date && date >= cutoffStr;
+      }).slice(0,5).map(t => ({
+        player: t.player?.name,
+        type: t.transfers?.[0]?.type,
+        date: t.transfers?.[0]?.date,
+        teamIn: t.transfers?.[0]?.teams?.in?.name,
+        teamOut: t.transfers?.[0]?.teams?.out?.name,
+      }));
+      if (transfers.length) transferData[tid] = { name, transfers };
+    } catch (e) { console.warn(`Transfers ${tid}:`, e.message); }
+  }, BATCH, 200);
+  return transferData;
+}
+
+function extractReferees(fixtures) {
+  const refereeData = {};
+  fixtures.forEach(f => {
+    if (f.fixture?.id && f.fixture?.referee) refereeData[f.fixture.id] = f.fixture.referee;
+  });
+  return refereeData;
+}
+
+async function runCron(env, isLineupRun = false) {
   const apiKey = env.API_FOOTBALL_KEY;
   if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
   const now = new Date();
-  const season = now.getMonth() < 7 ? now.getFullYear() - 1 : now.getFullYear();
+  const season = now.getMonth()<7?now.getFullYear()-1:now.getFullYear();
   const today = now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Lisbon' });
   const headers = { 'x-apisports-key': apiKey };
-  console.log(`Cron started: ${today}, season ${season}`);
+  console.log(`Cron: ${today}, season ${season}, lineupRun: ${isLineupRun}`);
+
+  if (isLineupRun) {
+    const cached = await env.CACHE.get('data_today');
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data.fixtures?.length) {
+        const lineupData = await fetchLineups(data.fixtures, headers);
+        const analysis = JSON.parse(await env.CACHE.get('analysis_today') || '{}');
+        analysis.lineupData = lineupData;
+        await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
+        console.log(`Lineup run done: ${Object.keys(lineupData).length} lineups`);
+        return;
+      }
+    }
+  }
 
   console.log('Phase 1: Fixtures + Odds...');
   const { allFixtures, allOdds } = await fetchFixturesAndOdds(today, season, headers);
-  console.log(`Phase 1 done: ${allFixtures.length} fixtures, ${allOdds.length} odds`);
+  console.log(`Phase 1: ${allFixtures.length} fixtures, ${allOdds.length} odds`);
+
+  const refereeData = extractReferees(allFixtures);
 
   await env.CACHE.put('data_today', JSON.stringify({
     fixtures: allFixtures, odds: allOdds,
     fetchedAt: now.toISOString(), today, season,
-    leaguesFetched: [...new Set(allFixtures.map(f => f._lid))].length,
+    leaguesFetched: [...new Set(allFixtures.map(f=>f._lid))].length,
     analysisReady: false,
   }), { expirationTtl: TTL });
 
   if (!allFixtures.length) { console.log('No fixtures today.'); return; }
 
-  console.log('Phase 2: Team form...');
+  console.log('Phase 2: Form (20 games)...');
   const formData = await fetchTeamForms(allFixtures, season, headers);
 
   console.log('Phase 3: H2H...');
   const h2hData = await fetchH2HData(allFixtures, headers);
 
-  console.log('Phase 4: Team stats...');
+  console.log('Phase 4: Stats...');
   const statsData = await fetchTeamStats(allFixtures, season, headers);
 
   console.log('Phase 5: Standings...');
@@ -307,13 +392,19 @@ async function runCron(env) {
   console.log('Phase 7: Advanced stats...');
   const advData = await fetchAdvancedStats(formData, headers);
 
-  const analysis = { formData, h2hData, statsData, standingsData, predData, injData, advData };
+  console.log('Phase 8: Transfers...');
+  const transferData = await fetchTransfers(allFixtures, headers);
+
+  console.log('Phase 9: Lineups (initial)...');
+  const lineupData = await fetchLineups(allFixtures, headers);
+
+  const analysis = { formData, h2hData, statsData, standingsData, predData, injData, advData, transferData, lineupData, refereeData };
   await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
 
   await env.CACHE.put('data_today', JSON.stringify({
     fixtures: allFixtures, odds: allOdds,
     fetchedAt: now.toISOString(), today, season,
-    leaguesFetched: [...new Set(allFixtures.map(f => f._lid))].length,
+    leaguesFetched: [...new Set(allFixtures.map(f=>f._lid))].length,
     analysisReady: true,
   }), { expirationTtl: TTL });
 
@@ -322,12 +413,13 @@ async function runCron(env) {
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runCron(env));
+    const hour = new Date(event.scheduledTime).getUTCHours();
+    const isLineupRun = hour === 11 || hour === 16;
+    ctx.waitUntil(runCron(env, isLineupRun));
   },
 
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS_HEADERS });
-
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -337,7 +429,7 @@ export default {
         if (cached) return new Response(cached, {
           headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
         });
-        ctx.waitUntil(runCron(env));
+        ctx.waitUntil(runCron(env, false));
         return new Response(JSON.stringify({ status: 'fetching', message: 'A buscar dados, tenta em 60 segundos' }), {
           status: 202, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
         });
@@ -365,7 +457,7 @@ export default {
     }
 
     if (path === '/data/force') {
-      ctx.waitUntil(runCron(env));
+      ctx.waitUntil(runCron(env, false));
       return new Response(JSON.stringify({ status: 'started' }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
       });
@@ -378,8 +470,8 @@ export default {
         return new Response(JSON.stringify({
           fetchedAt: data.fetchedAt, today: data.today,
           fixtures: data.fixtures.length, odds: data.odds.length,
-          leagues: data.leaguesFetched, analysisReady: data.analysisReady || false,
-          analysisKeys: a ? Object.keys(JSON.parse(a)).length : 0,
+          leagues: data.leaguesFetched, analysisReady: data.analysisReady||false,
+          analysisKeys: a?Object.keys(JSON.parse(a)).length:0,
         }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
       }
       return new Response(JSON.stringify({ status: 'empty' }), {
@@ -395,16 +487,14 @@ export default {
     try {
       const headers = {};
       for (const [k, v] of request.headers.entries()) {
-        if (!['host', 'cf-connecting-ip', 'cf-ray', 'cf-visitor'].includes(k.toLowerCase())) {
-          headers[k] = v;
-        }
+        if (!['host','cf-connecting-ip','cf-ray','cf-visitor'].includes(k.toLowerCase())) headers[k]=v;
       }
-      const body = request.method === 'POST' ? await request.text() : undefined;
+      const body = request.method==='POST'?await request.text():undefined;
       const upstream = await fetch(target, { method: request.method, headers, body });
       const responseBody = await upstream.arrayBuffer();
       return new Response(responseBody, {
         status: upstream.status,
-        headers: { ...CORS_HEADERS, 'Content-Type': upstream.headers.get('Content-Type') || 'application/json' }
+        headers: { ...CORS_HEADERS, 'Content-Type': upstream.headers.get('Content-Type')||'application/json' }
       });
     } catch (e) {
       return new Response(JSON.stringify({ error: e.message }), {
