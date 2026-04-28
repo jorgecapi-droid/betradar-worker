@@ -335,6 +335,296 @@ function extractReferees(fixtures) {
   return refereeData;
 }
 
+// ── FASE 10: SCORING COMPLETO + TOPS ─────────────────────────────
+function normalizeName(n){
+  return(n||'').toLowerCase()
+    .replace(/[àáâãäå]/g,'a').replace(/[èéêë]/g,'e').replace(/[ìíîï]/g,'i')
+    .replace(/[òóôõöø]/g,'o').replace(/[ùúûü]/g,'u').replace(/[ýÿ]/g,'y')
+    .replace(/[ñ]/g,'n').replace(/[ç]/g,'c').replace(/[şs]/g,'s').replace(/[ğg]/g,'g')
+    .replace(/[ıi]/g,'i').replace(/[žz]/g,'z').replace(/[čc]/g,'c')
+    .replace(/\b(fc|sc|ac|cf|afc|bfc|sv|rb|bsc|cd|rc|ss|as|ud|ca|cr|ec|se|sl|if|sk|fk|nk|hk|bk|ik|gd|rcd|kaa|kv|oh|aek|paok|rsc|real|club|atletico|sporting|sport|united|city|town|rovers|wanderers|athletic)\b/gi,'')
+    .replace(/[^a-z0-9\s]/g,'').replace(/\s+/g,' ').trim();
+}
+
+function getTidFromAnalysis(name, formData){
+  for(const [tid, d] of Object.entries(formData||{})){
+    if(!d.name)continue;
+    if(d.name===name)return parseInt(tid);
+    const na=normalizeName(name), nb=normalizeName(d.name);
+    if(na&&nb&&na.length>3&&nb.length>3&&(na===nb||na.includes(nb)||nb.includes(na)))return parseInt(tid);
+  }
+  return null;
+}
+
+function betSideWorker(pick){
+  const b=pick.bet||'';
+  const has=(s,tok)=>new RegExp(`(^|[\\s+])${tok}([\\s+]|$)`).test(s);
+  if(has(b,'1X')||b.startsWith('Vitória '+pick.home))return 'home';
+  if(has(b,'X2')||b.startsWith('Vitória '+pick.away))return 'away';
+  if(has(b,'12'))return 'either';
+  return 'none';
+}
+
+function calcXGWorker(hs, as_, hName, aName, advData){
+  const hAdv=hName?advData[hName]:null;
+  const aAdv=aName?advData[aName]:null;
+  if(hAdv&&aAdv){
+    const hShots=hAdv.shotsOnAvg||0;
+    const aShots=aAdv.shotsOnAvg||0;
+    const hXG=parseFloat((hShots*0.30*1.1).toFixed(2));
+    const aXG=parseFloat((aShots*0.30).toFixed(2));
+    return{home:Math.max(0.3,hXG),away:Math.max(0.2,aXG),total:parseFloat((Math.max(0.3,hXG)+Math.max(0.2,aXG)).toFixed(2))};
+  }
+  if(!hs||!as_)return null;
+  const leagueAvg=1.35;
+  const hAttack=(hs.goalsForAvgHome||leagueAvg)/leagueAvg;
+  const hDef=(hs.goalsAgainstAvgHome||leagueAvg)/leagueAvg;
+  const aAttack=(as_.goalsForAvgAway||leagueAvg)/leagueAvg;
+  const aDef=(as_.goalsAgainstAvgAway||leagueAvg)/leagueAvg;
+  const hXG=parseFloat((hAttack*aDef*leagueAvg*1.25).toFixed(2));
+  const aXG=parseFloat((aAttack*hDef*leagueAvg).toFixed(2));
+  return{home:hXG,away:aXG,total:parseFloat((hXG+aXG).toFixed(2))};
+}
+
+function calcConfidenceWorker(pick, analysis, season){
+  const {formData,h2hData,statsData,standingsData,predData,injData,advData} = analysis;
+  let score=0;
+
+  // 1. EV
+  if(pick.ev>15)score+=3;
+  else if(pick.ev>8)score+=2;
+  else if(pick.ev>3)score+=1;
+  else if(pick.ev<-8)score-=2;
+  else if(pick.ev<-3)score-=1;
+
+  // 2. Forma ponderada
+  const hTid=getTidFromAnalysis(pick.home,formData);
+  const aTid=getTidFromAnalysis(pick.away,formData);
+  const hFormData=hTid?formData[hTid]:null;
+  const aFormData=aTid?formData[aTid]:null;
+  const hf=hFormData?.form||[];
+  const af=aFormData?.form||[];
+  const hfHome=hFormData?.formHome||[];
+  const afAway=aFormData?.formAway||[];
+  const weightedScore=(form)=>{
+    const weights=[1,2,3,4,5];let ws=0,total=0;
+    [...form].slice(-5).forEach((r,i)=>{const w=weights[i]||1;total+=w;if(r==='W')ws+=w;else if(r==='L')ws-=w;});
+    return total>0?ws/total:null;
+  };
+  if(hf.length>0||af.length>0){
+    const side=betSideWorker(pick);
+    const hfEff=side==='home'&&hfHome.length>=2?hfHome:hf;
+    const afEff=side==='away'&&afAway.length>=2?afAway:af;
+    const hScore=weightedScore(hfEff);
+    const aScore=weightedScore(afEff);
+    if(side==='home'&&hScore!==null){
+      if(hScore>0.5)score+=4;else if(hScore>0.25)score+=3;else if(hScore>0)score+=2;
+      else if(hScore>-0.25)score+=1;else if(hScore<-0.5)score-=3;else score-=1;
+      if(aScore!==null){if(aScore<-0.3)score+=1;else if(aScore>0.4)score-=1;}
+    }else if(side==='away'&&aScore!==null){
+      if(aScore>0.5)score+=4;else if(aScore>0.25)score+=3;else if(aScore>0)score+=2;
+      else if(aScore>-0.25)score+=1;else if(aScore<-0.5)score-=3;else score-=1;
+      if(hScore!==null){if(hScore<-0.3)score+=1;else if(hScore>0.4)score-=1;}
+    }
+  }
+
+  // 3. H2H
+  if(hTid&&aTid){
+    const h2hKey=`${Math.min(hTid,aTid)}_${Math.max(hTid,aTid)}`;
+    const h2h=h2hData?.[h2hKey];
+    if(h2h&&h2h.total>=3){
+      const side=betSideWorker(pick);
+      const hRate=h2h.team1wins/h2h.total;
+      const aRate=h2h.team2wins/h2h.total;
+      if(side==='home'){
+        if(hRate>=0.65)score+=3;else if(hRate>=0.5)score+=2;else if(hRate>=0.4)score+=1;
+        else if(aRate>=0.65)score-=2;else if(aRate>=0.5)score-=1;
+      }else if(side==='away'){
+        if(aRate>=0.65)score+=3;else if(aRate>=0.5)score+=2;else if(aRate>=0.4)score+=1;
+        else if(hRate>=0.65)score-=2;else if(hRate>=0.5)score-=1;
+      }
+      if(pick.marketType==='totals'&&h2h.over25!=null){
+        const line=parseFloat(pick.bet.match(/[\d.]+/)?.[0]||2.5);
+        const h2hOverRate=h2h.over25/h2h.total;
+        const lineAdj=line>2.5?-0.1*(line-2.5):0.05*(2.5-line);
+        const adjustedRate=Math.min(1,Math.max(0,h2hOverRate+lineAdj));
+        if(pick.bet.includes('Over')){
+          if(adjustedRate>=0.65)score+=3;else if(adjustedRate>=0.5)score+=2;
+          else if(adjustedRate>=0.4)score+=1;else if(adjustedRate<=0.3)score-=2;else score-=1;
+        }else{
+          if(adjustedRate<=0.35)score+=3;else if(adjustedRate<=0.5)score+=2;
+          else if(adjustedRate<=0.6)score+=1;else if(adjustedRate>=0.7)score-=2;else score-=1;
+        }
+      }
+    }
+  }
+
+  // 4. Standings
+  if(hTid&&aTid&&pick.leagueId){
+    const standings=standingsData?.[`${pick.leagueId}_${season}`];
+    const hSt=standings?.[hTid];
+    const aSt=standings?.[aTid];
+    if(hSt&&aSt){
+      const side=betSideWorker(pick);
+      const gap=(aSt.pos||99)-(hSt.pos||99);
+      if(side==='home'){
+        if(gap>=8)score+=2;else if(gap>=4)score+=1;else if(gap<=-8)score-=2;else if(gap<=-4)score-=1;
+        if(hSt.home?.played>=3){const r=hSt.home.w/hSt.home.played;if(r>=0.6)score+=1;else if(r<=0.25)score-=1;}
+      }else if(side==='away'){
+        if(gap<=-8)score+=2;else if(gap<=-4)score+=1;else if(gap>=8)score-=2;else if(gap>=4)score-=1;
+        if(aSt.away?.played>=3){const r=aSt.away.w/aSt.away.played;if(r>=0.4)score+=1;else if(r<=0.15)score-=1;}
+      }
+    }
+  }
+
+  // 5. Lesões
+  if(pick.fixtureId){
+    const injuries=injData?.[pick.fixtureId]||[];
+    if(injuries.length>0){
+      const side=betSideWorker(pick);
+      const hInj=injuries.filter(i=>i.team===pick.home).length;
+      const aInj=injuries.filter(i=>i.team===pick.away).length;
+      if(side==='home'||side==='none'){if(hInj>=4)score-=3;else if(hInj>=2)score-=2;else if(hInj>=1)score-=1;}
+      if(side==='away'||side==='none'){if(aInj>=4)score-=3;else if(aInj>=2)score-=2;else if(aInj>=1)score-=1;}
+    }
+  }
+
+  // 6. xG
+  const hStats=hTid&&pick.leagueId?statsData?.[`${hTid}_${pick.leagueId}`]:null;
+  const aStats=aTid&&pick.leagueId?statsData?.[`${aTid}_${pick.leagueId}`]:null;
+  const advDataByName={};
+  Object.entries(advData||{}).forEach(([tid,d])=>{if(d.name)advDataByName[d.name]=d;});
+  const xg=calcXGWorker(hStats,aStats,pick.home,pick.away,advDataByName);
+  if(xg){
+    if(pick.marketType==='totals'){
+      const line=parseFloat(pick.bet.match(/[\d.]+/)?.[0]||2.5);
+      const diff=xg.total-line;
+      if(pick.bet.includes('Over')){
+        if(diff>0.7)score+=3;else if(diff>0.3)score+=2;else if(diff>0)score+=1;
+        else if(diff<-0.7)score-=3;else if(diff<-0.3)score-=2;else score-=1;
+      }else{
+        if(diff<-0.7)score+=3;else if(diff<-0.3)score+=2;else if(diff<0)score+=1;
+        else if(diff>0.7)score-=3;else if(diff>0.3)score-=2;else score-=1;
+      }
+    }else if(pick.marketType==='btts'){
+      const bothScore=xg.home>=1.0&&xg.away>=1.0;
+      const eitherLow=xg.home<0.6||xg.away<0.6;
+      if(pick.bet.includes('✓')){if(bothScore)score+=3;else if(!eitherLow)score+=1;else score-=2;}
+      else{if(eitherLow)score+=3;else if(!bothScore)score+=1;else score-=2;}
+    }
+  }
+
+  // 7. Previsão API
+  if(pick.fixtureId){
+    const pred=predData?.[pick.fixtureId];
+    if(pred){
+      const pHome=parseInt(pred.winPct?.home)||0;
+      const pAway=parseInt(pred.winPct?.away)||0;
+      const side=betSideWorker(pick);
+      if(side==='home'&&pHome>55)score+=1;else if(side==='away'&&pAway>55)score+=1;
+      else if(side==='home'&&pHome<35)score-=1;else if(side==='away'&&pAway<35)score-=1;
+    }
+  }
+
+  // 8. Penalizações
+  if(pick.odd>4.5)score-=2;else if(pick.odd>3.5)score-=1;
+  if(pick.marketType==='combo')score-=2;
+  if(pick.marketType==='ht')score-=1;
+
+  return Math.min(10,Math.max(1,score));
+}
+
+function normalizeBookmakers(bookmakers, home, away){
+  const picks=[];
+  for(const bk of bookmakers){
+    for(const bet of (bk.bets||[])){
+      const bn=bet.name||'';const id=bet.id;
+      const vs=bet.values||[];
+      if(id===1||bn==='Match Winner'){
+        const hO=parseFloat(vs.find(v=>v.value==='Home')?.odd)||0;
+        const dO=parseFloat(vs.find(v=>v.value==='Draw')?.odd)||0;
+        const aO=parseFloat(vs.find(v=>v.value==='Away')?.odd)||0;
+        const total=hO>1?1/hO:0+dO>1?1/dO:0+aO>1?1/aO:0;
+        if(hO>1)picks.push({marketType:'h2h',bet:`Vitória ${home}`,odd:hO,ev:Math.round((hO-total*hO)*10)/10,prob:Math.round(100/hO)});
+        if(dO>1)picks.push({marketType:'h2h',bet:'Empate',odd:dO,ev:Math.round((dO-total*dO)*10)/10,prob:Math.round(100/dO)});
+        if(aO>1)picks.push({marketType:'h2h',bet:`Vitória ${away}`,odd:aO,ev:Math.round((aO-total*aO)*10)/10,prob:Math.round(100/aO)});
+      }
+      if(id===5||bn.includes('Over/Under')){
+        const o25=parseFloat(vs.find(v=>v.value==='Over 2.5')?.odd)||0;
+        const u25=parseFloat(vs.find(v=>v.value==='Under 2.5')?.odd)||0;
+        if(o25>1)picks.push({marketType:'totals',bet:'Over 2.5',odd:o25,ev:Math.round((o25-1/o25*o25)*10)/10,prob:Math.round(100/o25)});
+        if(u25>1)picks.push({marketType:'totals',bet:'Under 2.5',odd:u25,ev:Math.round((u25-1/u25*u25)*10)/10,prob:Math.round(100/u25)});
+      }
+      if(id===8||bn==='Both Teams Score'){
+        const bY=parseFloat(vs.find(v=>v.value==='Yes')?.odd)||0;
+        const bN=parseFloat(vs.find(v=>v.value==='No')?.odd)||0;
+        if(bY>1)picks.push({marketType:'btts',bet:'Ambas Marcam ✓',odd:bY,ev:Math.round((bY-1/bY*bY)*10)/10,prob:Math.round(100/bY)});
+        if(bN>1)picks.push({marketType:'btts',bet:'Ambas Marcam ✗',odd:bN,ev:Math.round((bN-1/bN*bN)*10)/10,prob:Math.round(100/bN)});
+      }
+      if(id===3||bn==='Double Chance'){
+        const x1=parseFloat(vs.find(v=>v.value==='Home/Draw')?.odd)||0;
+        const x2=parseFloat(vs.find(v=>v.value==='Draw/Away')?.odd)||0;
+        const d12=parseFloat(vs.find(v=>v.value==='Home/Away')?.odd)||0;
+        if(x1>1)picks.push({marketType:'combo',bet:'1X',odd:x1,ev:Math.round((x1-1/x1*x1)*10)/10,prob:Math.round(100/x1)});
+        if(x2>1)picks.push({marketType:'combo',bet:'X2',odd:x2,ev:Math.round((x2-1/x2*x2)*10)/10,prob:Math.round(100/x2)});
+        if(d12>1)picks.push({marketType:'combo',bet:'12',odd:d12,ev:Math.round((d12-1/d12*d12)*10)/10,prob:Math.round(100/d12)});
+      }
+    }
+  }
+  return picks;
+}
+
+function calcTops(allFixtures, allOdds, analysis, season){
+  const oddsMap={};
+  (allOdds||[]).forEach(item=>{const id=item.fixture?.id;if(id)oddsMap[id]=item.bookmakers||[];});
+
+  const allPicks=[];
+  for(const f of allFixtures){
+    const fid=f.fixture?.id;
+    const home=f.teams?.home?.name;
+    const away=f.teams?.away?.name;
+    const lid=f._lid;
+    if(!home||!away||!fid)continue;
+    const bms=oddsMap[fid]||[];
+    if(!bms.length)continue;
+    const raw=normalizeBookmakers(bms,home,away);
+    const league=f.league?.name||'';
+    const time=f.fixture?.date?new Date(f.fixture.date).toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Lisbon'}):null;
+    for(const p of raw){
+      const pick={...p,home,away,league,time,fixtureId:fid,leagueId:lid,group:'soccer'};
+      pick.confidence=calcConfidenceWorker(pick,analysis,season);
+      allPicks.push(pick);
+    }
+  }
+
+  const composite=p=>(p.confidence*10)+(p.ev>0?p.ev*0.5:p.ev*0.3)+(p.odd<2.5?2:0);
+  allPicks.sort((a,b)=>composite(b)-composite(a));
+
+  // Dedup por jogo nos tops — 1 pick por jogo
+  const topFilter=(picks,marketType,betFilter)=>{
+    const seen=new Set();
+    return picks.filter(p=>{
+      if(marketType&&p.marketType!==marketType)return false;
+      if(betFilter&&!betFilter(p))return false;
+      const k=`${p.home}|${p.away}`;
+      if(seen.has(k))return false;
+      seen.add(k);return true;
+    });
+  };
+
+  return{
+    top15:topFilter(allPicks.filter(p=>p.odd>=1.40&&p.odd<=3.00&&p.confidence>=5),'','').slice(0,15),
+    h2h:topFilter(allPicks,'h2h','').slice(0,20),
+    totals:topFilter(allPicks,'totals','').slice(0,20),
+    btts:topFilter(allPicks,'btts','').slice(0,20),
+    combo_over:topFilter(allPicks,'combo',p=>p.bet.includes('Over')||p.bet.includes('1/2')).slice(0,10),
+    combo_under:topFilter(allPicks,'combo',p=>p.bet.includes('Under')).slice(0,10),
+    combo_btts:topFilter(allPicks,'combo',p=>p.bet.includes('Ambas')).slice(0,10),
+    combo_bttsno:topFilter(allPicks,'combo',p=>p.bet.includes('Não')).slice(0,10),
+    generatedAt:new Date().toISOString(),
+  };
+}
+
 async function runCron(env, isLineupRun = false) {
   const apiKey = env.API_FOOTBALL_KEY;
   if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
@@ -401,6 +691,11 @@ async function runCron(env, isLineupRun = false) {
   const analysis = { formData, h2hData, statsData, standingsData, predData, injData, advData, transferData, lineupData, refereeData };
   await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
 
+  // Phase 10: Calculate tops with full scoring
+  console.log('Phase 10: Scoring + Tops...');
+  const tops = calcTops(allFixtures, allOdds, analysis, season);
+  await env.CACHE.put('tops_today', JSON.stringify(tops), { expirationTtl: TTL });
+
   await env.CACHE.put('data_today', JSON.stringify({
     fixtures: allFixtures, odds: allOdds,
     fetchedAt: now.toISOString(), today, season,
@@ -443,6 +738,22 @@ export default {
     if (path === '/analysis') {
       try {
         const cached = await env.CACHE.get('analysis_today');
+        if (cached) return new Response(cached, {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
+        });
+        return new Response(JSON.stringify({ status: 'not_ready' }), {
+          status: 202, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    if (path === '/tops') {
+      try {
+        const cached = await env.CACHE.get('tops_today');
         if (cached) return new Response(cached, {
           headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
         });
