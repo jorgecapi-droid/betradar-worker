@@ -625,6 +625,134 @@ function calcTops(allFixtures, allOdds, analysis, season){
   };
 }
 
+// ── FASE 11: HISTÓRICO AUTOMÁTICO ────────────────────────────────
+function checkResult(pick, fixture){
+  const gh = fixture.goals?.home ?? null;
+  const ga = fixture.goals?.away ?? null;
+  if(gh === null || ga === null) return null;
+  const bet = pick.bet || '';
+  const home = pick.home;
+  const away = pick.away;
+
+  if(bet.startsWith('Vitória '+home)) return gh > ga ? 'green' : 'red';
+  if(bet.startsWith('Vitória '+away)) return ga > gh ? 'green' : 'red';
+  if(bet === 'Empate') return gh === ga ? 'green' : 'red';
+  if(bet.includes('1X')) return gh >= ga ? 'green' : 'red';
+  if(bet.includes('X2')) return ga >= gh ? 'green' : 'red';
+  if(bet.includes('Over 2.5')) return (gh + ga) > 2.5 ? 'green' : 'red';
+  if(bet.includes('Under 2.5')) return (gh + ga) < 2.5 ? 'green' : 'red';
+  if(bet.includes('Over 1.5')) return (gh + ga) > 1.5 ? 'green' : 'red';
+  if(bet.includes('Under 1.5')) return (gh + ga) < 1.5 ? 'green' : 'red';
+  if(bet.includes('Ambas Marcam ✓')) return gh > 0 && ga > 0 ? 'green' : 'red';
+  if(bet.includes('Ambas Marcam ✗')) return gh === 0 || ga === 0 ? 'green' : 'red';
+  if(bet.includes('1/2 + Over 2.5')) return gh !== ga && (gh+ga) > 2.5 ? 'green' : 'red';
+  if(bet.includes('1/2 + Under 2.5')) return gh !== ga && (gh+ga) < 2.5 ? 'green' : 'red';
+  if(bet.includes('1/2 + BTTS')) return gh !== ga && gh > 0 && ga > 0 ? 'green' : 'red';
+  if(bet.includes('1X + Over')) return gh >= ga && (gh+ga) > 2.5 ? 'green' : 'red';
+  if(bet.includes('X2 + Over')) return ga >= gh && (gh+ga) > 2.5 ? 'green' : 'red';
+  if(bet.includes('1X + Under')) return gh >= ga && (gh+ga) < 2.5 ? 'green' : 'red';
+  if(bet.includes('X2 + Under')) return ga >= gh && (gh+ga) < 2.5 ? 'green' : 'red';
+  if(bet.includes('1X + Ambas Marcam')) return gh >= ga && gh > 0 && ga > 0 ? 'green' : 'red';
+  if(bet.includes('X2 + Ambas Marcam')) return ga >= gh && gh > 0 && ga > 0 ? 'green' : 'red';
+  return null;
+}
+
+async function updateHistory(env, today, headers, season){
+  try{
+    // Buscar tops de ontem
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yDate = yesterday.toLocaleDateString('sv-SE', { timeZone: 'Europe/Lisbon' });
+    const yTops = await env.CACHE.get(`tops_${yDate}`);
+    if(!yTops){ console.log('No tops for yesterday, skipping history.'); return; }
+
+    const tops = JSON.parse(yTops);
+    const picksToVerify = tops.top15 || [];
+    if(!picksToVerify.length){ console.log('No picks to verify.'); return; }
+
+    // Buscar resultados de ontem
+    const rf = await fetch(`${BASE}/fixtures?date=${yDate}&timezone=Europe/Lisbon&status=FT`, {
+      headers: { 'x-apisports-key': headers['x-apisports-key'] }
+    });
+    if(!rf.ok){ console.warn('Failed to fetch results for', yDate); return; }
+    const fd = await rf.json();
+    const results = fd?.response || [];
+
+    // Criar mapa de resultados por equipas
+    const resultsMap = {};
+    results.forEach(f => {
+      const home = f.teams?.home?.name;
+      const away = f.teams?.away?.name;
+      if(home && away) resultsMap[`${home}|${away}`] = f;
+    });
+
+    // Verificar cada pick
+    const verifiedPicks = picksToVerify.map(pick => {
+      const key = `${pick.home}|${pick.away}`;
+      const fixture = resultsMap[key];
+      if(!fixture) return { ...pick, result: 'void', date: yDate };
+      const result = checkResult(pick, fixture);
+      return { ...pick, result: result || 'void', date: yDate,
+        score: `${fixture.goals?.home}-${fixture.goals?.away}` };
+    }).filter(p => p.result !== 'void');
+
+    if(!verifiedPicks.length){ console.log('No verified picks for', yDate); return; }
+
+    // Carregar histórico existente
+    const histRaw = await env.CACHE.get('history');
+    const history = histRaw ? JSON.parse(histRaw) : { days: [], stats: {} };
+
+    // Adicionar dia ao histórico
+    const greens = verifiedPicks.filter(p => p.result === 'green').length;
+    const reds = verifiedPicks.filter(p => p.result === 'red').length;
+    const total = greens + reds;
+    const roi = total > 0 ? parseFloat(((verifiedPicks.filter(p=>p.result==='green').reduce((s,p)=>s+p.odd,0) - total) / total * 100).toFixed(1)) : 0;
+
+    history.days.unshift({
+      date: yDate,
+      picks: verifiedPicks,
+      greens, reds, total,
+      rate: total > 0 ? parseFloat((greens/total*100).toFixed(1)) : 0,
+      roi,
+    });
+
+    // Manter só 90 dias
+    if(history.days.length > 90) history.days = history.days.slice(0, 90);
+
+    // Recalcular stats globais
+    const allDays = history.days;
+    const totalG = allDays.reduce((s,d)=>s+d.greens,0);
+    const totalR = allDays.reduce((s,d)=>s+d.reds,0);
+    const totalP = totalG + totalR;
+    history.stats = {
+      totalPicks: totalP,
+      greens: totalG,
+      reds: totalR,
+      rate: totalP > 0 ? parseFloat((totalG/totalP*100).toFixed(1)) : 0,
+      roi: parseFloat((allDays.reduce((s,d)=>s+d.roi,0)/Math.max(allDays.length,1)).toFixed(1)),
+      days: allDays.length,
+      streak: calcStreak(allDays),
+    };
+
+    await env.CACHE.put('history', JSON.stringify(history), { expirationTtl: 60 * 60 * 24 * 91 });
+    console.log(`History updated: ${yDate} — ${greens}✅ ${reds}❌ (${total} picks)`);
+  }catch(e){
+    console.warn('History update failed:', e.message);
+  }
+}
+
+function calcStreak(days){
+  if(!days.length) return { type: 'none', count: 0 };
+  let count = 0;
+  const lastType = days[0].greens >= days[0].reds ? 'green' : 'red';
+  for(const d of days){
+    const t = d.greens >= d.reds ? 'green' : 'red';
+    if(t === lastType) count++;
+    else break;
+  }
+  return { type: lastType, count };
+}
+
 async function runCron(env, isLineupRun = false) {
   const apiKey = env.API_FOOTBALL_KEY;
   if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
@@ -694,7 +822,13 @@ async function runCron(env, isLineupRun = false) {
   // Phase 10: Calculate tops with full scoring
   console.log('Phase 10: Scoring + Tops...');
   const tops = calcTops(allFixtures, allOdds, analysis, season);
+  // Guardar tops do dia com data para histórico
+  await env.CACHE.put(`tops_${today}`, JSON.stringify({...tops, date: today}), { expirationTtl: 60 * 60 * 24 * 91 }); // 91 dias
   await env.CACHE.put('tops_today', JSON.stringify(tops), { expirationTtl: TTL });
+
+  // Phase 11: Verificar resultados de ontem e actualizar histórico
+  console.log('Phase 11: History...');
+  await updateHistory(env, today, headers, season);
 
   await env.CACHE.put('data_today', JSON.stringify({
     fixtures: allFixtures, odds: allOdds,
@@ -759,6 +893,22 @@ export default {
         });
         return new Response(JSON.stringify({ status: 'not_ready' }), {
           status: 202, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    if (path === '/history') {
+      try {
+        const cached = await env.CACHE.get('history');
+        if (cached) return new Response(cached, {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
+        });
+        return new Response(JSON.stringify({ days: [], stats: { totalPicks: 0, greens: 0, reds: 0, rate: 0, roi: 0, days: 0 } }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
         });
       } catch (e) {
         return new Response(JSON.stringify({ error: e.message }), {
