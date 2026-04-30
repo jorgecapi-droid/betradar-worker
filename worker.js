@@ -25,6 +25,59 @@ const BASE = 'https://v3.football.api-sports.io';
 const TTL = 60 * 60 * 14;
 const BATCH = 3;
 
+// ── BETTING DAY (06:00 Lisboa → 06:00 Lisboa do dia seguinte) ──
+// Resolve o problema de jogos sul-americanos (Libertadores, Brasileirão noite, MLS, Argentina)
+// que começam após a meia-noite Lisboa mas pertencem ao "matchday" do dia anterior.
+const BETTING_DAY_CUTOFF_HOUR = 6;
+
+// Devolve a data Lisboa (YYYY-MM-DD) do início do "betting day" actual.
+// Se agora são 03:00 Lisboa, o betting day actual ainda começou ontem.
+function getBettingDayDate(date = new Date(), offsetDays = 0) {
+  const lisbonStr = date.toLocaleString('en-CA', { timeZone: 'Europe/Lisbon', hour12: false });
+  const [datePart, timePart] = lisbonStr.split(', ');
+  const [ly, lm, ld] = datePart.split('-').map(Number);
+  const [lh] = timePart.split(':').map(Number);
+  let baseY = ly, baseM = lm, baseD = ld;
+  if (lh < BETTING_DAY_CUTOFF_HOUR) {
+    const d = new Date(Date.UTC(ly, lm - 1, ld));
+    d.setUTCDate(d.getUTCDate() - 1);
+    baseY = d.getUTCFullYear(); baseM = d.getUTCMonth() + 1; baseD = d.getUTCDate();
+  }
+  if (offsetDays !== 0) {
+    const d = new Date(Date.UTC(baseY, baseM - 1, baseD));
+    d.setUTCDate(d.getUTCDate() + offsetDays);
+    baseY = d.getUTCFullYear(); baseM = d.getUTCMonth() + 1; baseD = d.getUTCDate();
+  }
+  return `${baseY}-${String(baseM).padStart(2, '0')}-${String(baseD).padStart(2, '0')}`;
+}
+
+// Bounds em ms UTC para o betting day a partir de uma data Lisboa YYYY-MM-DD
+function getBettingDayBoundsFromDate(lisbonYmd) {
+  const [y, m, d] = lisbonYmd.split('-').map(Number);
+  // descobrir offset Lisboa nesse dia (probe às 12:00 UTC)
+  const probe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const lisbonProbe = probe.toLocaleString('en-CA', {
+    timeZone: 'Europe/Lisbon', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  });
+  const lisbonHour = parseInt(lisbonProbe.split(', ')[1].split(':')[0], 10);
+  const utcOffsetMin = (lisbonHour - 12) * 60; // +60 verão, 0 inverno
+  // 06:00 Lisboa nesse dia em ms UTC
+  const startUtc = Date.UTC(y, m - 1, d, BETTING_DAY_CUTOFF_HOUR, 0, 0) - utcOffsetMin * 60000;
+  return { startMs: startUtc, endMs: startUtc + 24 * 3600 * 1000 };
+}
+
+// Para a data Lisboa do betting day, devolve as datas de calendário API (YYYY-MM-DD) que
+// é preciso pedir à API. Pode ser 1 (sempre o próprio dia) ou 2 (também o seguinte, para
+// apanhar madrugada). 06:00→06:00 Lisboa cobre sempre 2 dias de calendário.
+function getApiDatesForBettingDay(lisbonYmd) {
+  const [y, m, d] = lisbonYmd.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d));
+  next.setUTCDate(next.getUTCDate() + 1);
+  const nextYmd = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+  return [lisbonYmd, nextYmd];
+}
+
 async function batchAll(items, fn, size = BATCH, delay = 200) {
   const results = [];
   for (let i = 0; i < items.length; i += size) {
@@ -38,20 +91,46 @@ async function batchAll(items, fn, size = BATCH, delay = 200) {
 
 async function fetchFixturesAndOdds(today, season, headers) {
   const allFixtures = [], allOdds = [];
+  // `today` é a data Lisboa do início do betting day (ex: 2026-04-30).
+  // O betting day cobre 06:00 Lisboa today → 06:00 Lisboa tomorrow,
+  // logo precisamos de pedir AMBAS as datas de calendário à API.
+  const [d1, d2] = getApiDatesForBettingDay(today);
+  const { startMs, endMs } = getBettingDayBoundsFromDate(today);
+  const seenFixIds = new Set();
+  const seenOddsIds = new Set();
   await batchAll(LEAGUE_IDS, async (lid) => {
-    try {
-      const rf = await fetch(`${BASE}/fixtures?league=${lid}&season=${season}&date=${today}&timezone=Europe/Lisbon`, { headers });
-      if (!rf.ok) return;
-      const fd = await rf.json();
-      const fixtures = fd?.response || [];
-      if (!fixtures.length) return;
-      allFixtures.push(...fixtures.map(f => ({ ...f, _lid: lid })));
-      const ro = await fetch(`${BASE}/odds?league=${lid}&season=${season}&date=${today}&timezone=Europe/Lisbon`, { headers });
-      if (ro.ok) {
-        const od = await ro.json();
-        allOdds.push(...(od?.response || []));
-      }
-    } catch (e) { console.warn(`Fixtures/odds ${lid}:`, e.message); }
+    for (const dateStr of [d1, d2]) {
+      try {
+        const rf = await fetch(`${BASE}/fixtures?league=${lid}&season=${season}&date=${dateStr}&timezone=Europe/Lisbon`, { headers });
+        if (!rf.ok) continue;
+        const fd = await rf.json();
+        const fixtures = fd?.response || [];
+        if (!fixtures.length) continue;
+        // Filtrar pela janela betting-day e dedup por fixture id
+        const inWindow = fixtures.filter(f => {
+          const t = f.fixture?.date ? new Date(f.fixture.date).getTime() : 0;
+          if (!t || t < startMs || t >= endMs) return false;
+          const fid = f.fixture?.id;
+          if (fid && seenFixIds.has(fid)) return false;
+          if (fid) seenFixIds.add(fid);
+          return true;
+        });
+        if (!inWindow.length) continue;
+        allFixtures.push(...inWindow.map(f => ({ ...f, _lid: lid })));
+        const ro = await fetch(`${BASE}/odds?league=${lid}&season=${season}&date=${dateStr}&timezone=Europe/Lisbon`, { headers });
+        if (ro.ok) {
+          const od = await ro.json();
+          const oddsArr = od?.response || [];
+          // Só guardar odds de fixtures que entraram (e dedup)
+          oddsArr.forEach(o => {
+            const fid = o.fixture?.id;
+            if (!fid || !seenFixIds.has(fid) || seenOddsIds.has(fid)) return;
+            seenOddsIds.add(fid);
+            allOdds.push(o);
+          });
+        }
+      } catch (e) { console.warn(`Fixtures/odds ${lid} ${dateStr}:`, e.message); }
+    }
   }, BATCH, 500);
   return { allFixtures, allOdds };
 }
@@ -659,10 +738,8 @@ function checkResult(pick, fixture){
 
 async function updateHistory(env, today, headers, season){
   try{
-    // Buscar tops de ontem
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yDate = yesterday.toLocaleDateString('sv-SE', { timeZone: 'Europe/Lisbon' });
+    // Betting day de ontem (mesma fronteira 06:00→06:00)
+    const yDate = getBettingDayDate(new Date(), -1);
     const yTops = await env.CACHE.get(`tops_${yDate}`);
     if(!yTops){ console.log('No tops for yesterday, skipping history.'); return; }
 
@@ -670,13 +747,25 @@ async function updateHistory(env, today, headers, season){
     const picksToVerify = tops.top15 || [];
     if(!picksToVerify.length){ console.log('No picks to verify.'); return; }
 
-    // Buscar resultados de ontem
-    const rf = await fetch(`${BASE}/fixtures?date=${yDate}&timezone=Europe/Lisbon&status=FT`, {
-      headers: { 'x-apisports-key': headers['x-apisports-key'] }
-    });
-    if(!rf.ok){ console.warn('Failed to fetch results for', yDate); return; }
-    const fd = await rf.json();
-    const results = fd?.response || [];
+    // Buscar resultados das DUAS datas de calendário API que cobrem o betting day de ontem
+    // (ex: betting day 2026-04-30 = jogos de 30 Apr 06:00 → 1 May 06:00 Lisboa,
+    //  portanto os jogos pós-meia-noite estão na data 2026-05-01 da API).
+    const [apiD1, apiD2] = getApiDatesForBettingDay(yDate);
+    const { startMs, endMs } = getBettingDayBoundsFromDate(yDate);
+    const results = [];
+    for (const dateStr of [apiD1, apiD2]) {
+      const rf = await fetch(`${BASE}/fixtures?date=${dateStr}&timezone=Europe/Lisbon&status=FT`, {
+        headers: { 'x-apisports-key': headers['x-apisports-key'] }
+      });
+      if(!rf.ok){ console.warn('Failed to fetch results for', dateStr); continue; }
+      const fd = await rf.json();
+      const arr = fd?.response || [];
+      // só fixtures dentro da janela do betting day de ontem
+      arr.forEach(f => {
+        const t = f.fixture?.date ? new Date(f.fixture.date).getTime() : 0;
+        if (t >= startMs && t < endMs) results.push(f);
+      });
+    }
 
     // Criar mapa de resultados por equipas
     const resultsMap = {};
@@ -758,9 +847,12 @@ async function runCron(env, isLineupRun = false) {
   if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
   const now = new Date();
   const season = now.getMonth()<7?now.getFullYear()-1:now.getFullYear();
-  const today = now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Lisbon' });
+  // `today` = data Lisboa do início do betting day actual (06:00 Lisboa → 06:00 Lisboa+1).
+  // Em qualquer cron run >= 07:00 UTC esta data coincide com o dia de calendário Lisboa,
+  // mas usamos o helper para ser robusto a runs de madrugada/futuros.
+  const today = getBettingDayDate(now, 0);
   const headers = { 'x-apisports-key': apiKey };
-  console.log(`Cron: ${today}, season ${season}, lineupRun: ${isLineupRun}`);
+  console.log(`Cron: bettingDay=${today}, season ${season}, lineupRun: ${isLineupRun}`);
 
   if (isLineupRun) {
     const cached = await env.CACHE.get('data_today');
