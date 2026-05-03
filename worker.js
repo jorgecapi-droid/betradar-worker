@@ -1061,6 +1061,56 @@ export default {
       });
     }
 
+    // Endpoint de diagnóstico: faz uma call real à API com uma fixture conhecida e
+    // devolve o resultado raw. Permite ver se o problema é credencial, season,
+    // ou um corpo de resposta inesperado.
+    if (path === '/diag') {
+      const apiKey = env.API_FOOTBALL_KEY;
+      if (!apiKey) {
+        return new Response(JSON.stringify({ error: 'API_FOOTBALL_KEY not set' }), {
+          status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      }
+      const headers = { 'x-apisports-key': apiKey };
+      const now = new Date();
+      const season = now.getMonth()<7?now.getFullYear()-1:now.getFullYear();
+      // Buscar 1 fixture do KV para usar como sample
+      const dataRaw = await env.CACHE.get('data_today');
+      if (!dataRaw) {
+        return new Response(JSON.stringify({ error: 'no data_today' }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      }
+      const data = JSON.parse(dataRaw);
+      const sample = data.fixtures?.[0];
+      if (!sample) {
+        return new Response(JSON.stringify({ error: 'no sample fixture' }), {
+          headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
+        });
+      }
+      const lid = sample._lid;
+      const teamId = sample.teams?.home?.id;
+      const teamName = sample.teams?.home?.name;
+      // Test 1: form query (a que está a falhar?)
+      const formUrl = `${BASE}/fixtures?team=${teamId}&league=${lid}&season=${season}&last=20&status=FT`;
+      const r1 = await fetch(formUrl, { headers });
+      const r1json = await r1.json();
+      // Test 2: stats query
+      const statsUrl = `${BASE}/teams/statistics?team=${teamId}&league=${lid}&season=${season}`;
+      const r2 = await fetch(statsUrl, { headers });
+      const r2json = await r2.json();
+      // Test 3: predictions
+      const predUrl = `${BASE}/predictions?fixture=${sample.fixture?.id}`;
+      const r3 = await fetch(predUrl, { headers });
+      const r3json = await r3.json();
+      return new Response(JSON.stringify({
+        sampleFixture: { id: sample.fixture?.id, lid, teamId, teamName, season },
+        form: { url: formUrl, status: r1.status, errors: r1json.errors, results: r1json.results, responseLen: (r1json.response||[]).length },
+        stats: { url: statsUrl, status: r2.status, errors: r2json.errors, hasResponse: !!r2json.response },
+        pred: { url: predUrl, status: r3.status, errors: r3json.errors, results: r3json.results, responseLen: (r3json.response||[]).length },
+      }, null, 2), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+    }
+
     const target = url.searchParams.get('target');
     if (!target) return new Response(JSON.stringify({ error: 'Missing target param' }), {
       status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
