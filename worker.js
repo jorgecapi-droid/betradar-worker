@@ -225,16 +225,22 @@ async function fetchH2HData(fixtures, headers) {
       const d = await r.json();
       const matches = d?.response || [];
       if (!matches.length) return;
-      let t1w = 0, t2w = 0, draws = 0, over25 = 0, btts = 0;
+      let t1w = 0, t2w = 0, draws = 0, over25 = 0, btts = 0, totalGoals = 0;
       matches.forEach(m => {
         const gh = m.goals.home ?? 0, ga = m.goals.away ?? 0;
+        totalGoals += gh + ga;
         if (gh + ga > 2.5) over25++;
         if (gh > 0 && ga > 0) btts++;
         if (gh === ga) draws++;
         else if (m.teams.home.id === hId ? gh > ga : ga > gh) t1w++;
         else t2w++;
       });
-      h2hData[key] = { total: matches.length, team1wins: t1w, team2wins: t2w, draws, over25, btts };
+      h2hData[key] = {
+        total: matches.length,
+        team1wins: t1w, team2wins: t2w, draws,
+        over25, btts,
+        avgGoals: (totalGoals / matches.length).toFixed(1),
+      };
     } catch (e) { console.warn(`H2H ${key}:`, e.message); }
   }, BATCH, 200);
   return h2hData;
