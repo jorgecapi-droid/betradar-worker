@@ -147,13 +147,15 @@ async function fetchTeamForms(fixtures, season, headers) {
   });
   const teamList = [...teams.values()];
   console.log(`Form for ${teamList.length} teams...`);
+  let okCount = 0, emptyCount = 0, failCount = 0;
   await batchAll(teamList, async ({ id, name, lid }) => {
     try {
       const r = await fetch(`${BASE}/fixtures?team=${id}&league=${lid}&season=${season}&last=20&status=FT`, { headers });
-      if (!r.ok) return;
+      if (!r.ok) { failCount++; console.warn(`Form HTTP ${r.status} for ${name} (lid=${lid})`); return; }
       const d = await r.json();
       const fl = d?.response || [];
-      if (!fl.length) return;
+      if (!fl.length) { emptyCount++; return; }
+      okCount++;
       const formAll = [], formHome = [], formAway = [];
       // Estatísticas calculadas a partir dos últimos 5 jogos (mesma lógica do front-end)
       let goalsFor = 0, goalsAgainst = 0, cleanSheets = 0, bttsCount = 0, n = 0;
@@ -195,8 +197,9 @@ async function fetchTeamForms(fixtures, season, headers) {
         attackAvgAway: nAway > 0 ? +(goalsForAway / nAway).toFixed(2) : 0,
         defenseAvgAway: nAway > 0 ? +(goalsAgainstAway / nAway).toFixed(2) : 0,
       };
-    } catch (e) { console.warn(`Form ${id}:`, e.message); }
+    } catch (e) { failCount++; console.warn(`Form ${id}:`, e.message); }
   }, BATCH, 200);
+  console.log(`Form summary: ok=${okCount}, empty=${emptyCount}, fail=${failCount}, total=${teamList.length}`);
   return formData;
 }
 
