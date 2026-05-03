@@ -155,6 +155,11 @@ async function fetchTeamForms(fixtures, season, headers) {
       const fl = d?.response || [];
       if (!fl.length) return;
       const formAll = [], formHome = [], formAway = [];
+      // Estatísticas calculadas a partir dos últimos 5 jogos (mesma lógica do front-end)
+      let goalsFor = 0, goalsAgainst = 0, cleanSheets = 0, bttsCount = 0, n = 0;
+      let goalsForHome = 0, goalsAgainstHome = 0, nHome = 0;
+      let goalsForAway = 0, goalsAgainstAway = 0, nAway = 0;
+      const last5 = fl.slice(0, 5);
       fl.forEach(f => {
         const isHome = f.teams.home.id === id;
         const gh = f.goals.home ?? 0, ga = f.goals.away ?? 0;
@@ -162,12 +167,33 @@ async function fetchTeamForms(fixtures, season, headers) {
         formAll.push(res);
         if (isHome) formHome.push(res); else formAway.push(res);
       });
+      last5.forEach(f => {
+        const isHome = f.teams.home.id === id;
+        const gh = f.goals.home ?? 0, ga = f.goals.away ?? 0;
+        const gf = isHome ? gh : ga;
+        const gAg = isHome ? ga : gh;
+        goalsFor += gf; goalsAgainst += gAg;
+        if (gAg === 0) cleanSheets++;
+        if (gh > 0 && ga > 0) bttsCount++;
+        n++;
+        if (isHome) { goalsForHome += gf; goalsAgainstHome += gAg; nHome++; }
+        else { goalsForAway += gf; goalsAgainstAway += gAg; nAway++; }
+      });
       formData[id] = {
         name, tid: id,
         form: formAll.reverse().slice(0, 10),
         formHome: formHome.reverse().slice(0, 10),
         formAway: formAway.reverse().slice(0, 10),
         recentFixtures: fl.slice(0, 3).map(f => f.fixture?.id).filter(Boolean),
+        attackAvg: n > 0 ? +(goalsFor / n).toFixed(2) : 0,
+        defenseAvg: n > 0 ? +(goalsAgainst / n).toFixed(2) : 0,
+        cleanSheets,
+        bttsCount,
+        gamesAnalyzed: n,
+        attackAvgHome: nHome > 0 ? +(goalsForHome / nHome).toFixed(2) : 0,
+        defenseAvgHome: nHome > 0 ? +(goalsAgainstHome / nHome).toFixed(2) : 0,
+        attackAvgAway: nAway > 0 ? +(goalsForAway / nAway).toFixed(2) : 0,
+        defenseAvgAway: nAway > 0 ? +(goalsAgainstAway / nAway).toFixed(2) : 0,
       };
     } catch (e) { console.warn(`Form ${id}:`, e.message); }
   }, BATCH, 200);
