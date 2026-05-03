@@ -871,17 +871,14 @@ function calcStreak(days){
   return { type: lastType, count };
 }
 
-async function runCron(env, isLineupRun = false) {
+async function runCron(env, isLineupRun = false, phaseGroup = null) {
   const apiKey = env.API_FOOTBALL_KEY;
   if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
   const now = new Date();
   const season = now.getMonth()<7?now.getFullYear()-1:now.getFullYear();
-  // `today` = data Lisboa do início do betting day actual (06:00 Lisboa → 06:00 Lisboa+1).
-  // Em qualquer cron run >= 07:00 UTC esta data coincide com o dia de calendário Lisboa,
-  // mas usamos o helper para ser robusto a runs de madrugada/futuros.
   const today = getBettingDayDate(now, 0);
   const headers = { 'x-apisports-key': apiKey };
-  console.log(`Cron: bettingDay=${today}, season ${season}, lineupRun: ${isLineupRun}`);
+  console.log(`Cron: bettingDay=${today}, season ${season}, lineupRun=${isLineupRun}, phaseGroup=${phaseGroup}`);
 
   if (isLineupRun) {
     const cached = await env.CACHE.get('data_today');
@@ -898,74 +895,135 @@ async function runCron(env, isLineupRun = false) {
     }
   }
 
-  console.log('Phase 1: Fixtures + Odds...');
-  const { allFixtures, allOdds } = await fetchFixturesAndOdds(today, season, headers);
-  console.log(`Phase 1: ${allFixtures.length} fixtures, ${allOdds.length} odds`);
+  // ── PHASE GROUPS — divide o trabalho pelos 5 cron runs/dia para caber no CPU
+  // limit dos Workers (10ms free / 30s paid). Cada run faz uma fatia e acumula em
+  // analysis_today. Depois do 5º run, analysisReady=true.
+  //
+  // - 'all'       (default, /data/force): faz tudo de uma vez (versão antiga)
+  // - 'fixtures'  (07h UTC): Phase 1 (fixtures+odds)  + Phase 2 (form)
+  // - 'h2h-stats' (11h UTC): Phase 3 (H2H)            + Phase 4 (stats)
+  // - 'standings' (12h UTC): Phase 5 (standings)      + Phase 6 (pred+inj)
+  // - 'advanced'  (16h UTC): Phase 7 (advanced)       + Phase 8 (transfers)
+  // - 'finalize'  (17h UTC): Phase 9 (lineups)        + Phase 10 (tops) + 11 (history)
+  const group = phaseGroup || 'all';
 
-  const refereeData = extractReferees(allFixtures);
+  // === Carregar fixtures+odds (sempre necessário ler) ===
+  let fixturesData = null;
+  if (group === 'fixtures' || group === 'all') {
+    console.log('Phase 1: Fixtures + Odds...');
+    const { allFixtures, allOdds } = await fetchFixturesAndOdds(today, season, headers);
+    console.log(`Phase 1: ${allFixtures.length} fixtures, ${allOdds.length} odds`);
+    if (!allFixtures.length) { console.log('No fixtures today.'); return; }
+    const refereeData = extractReferees(allFixtures);
+    await env.CACHE.put('data_today', JSON.stringify({
+      fixtures: allFixtures, odds: allOdds,
+      fetchedAt: now.toISOString(), today, season,
+      leaguesFetched: [...new Set(allFixtures.map(f=>f._lid))].length,
+      analysisReady: false,
+    }), { expirationTtl: TTL });
+    fixturesData = { allFixtures, allOdds, refereeData };
+    // Inicializar analysis_today com o que tem agora — outros runs adicionarão a esta blob
+    const analysis = { formData: {}, h2hData: {}, statsData: {}, standingsData: {}, predData: {}, injData: {}, advData: {}, transferData: {}, lineupData: {}, refereeData };
+    await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
+  } else {
+    // Outros grupos — re-usar fixtures já buscados
+    const cached = await env.CACHE.get('data_today');
+    if (!cached) { console.warn(`Group ${group}: data_today not yet populated, skipping`); return; }
+    const data = JSON.parse(cached);
+    if (!data.fixtures?.length) { console.warn(`Group ${group}: no fixtures, skipping`); return; }
+    fixturesData = { allFixtures: data.fixtures, allOdds: data.odds || [], refereeData: extractReferees(data.fixtures) };
+  }
+  const { allFixtures, allOdds, refereeData } = fixturesData;
 
-  await env.CACHE.put('data_today', JSON.stringify({
-    fixtures: allFixtures, odds: allOdds,
-    fetchedAt: now.toISOString(), today, season,
-    leaguesFetched: [...new Set(allFixtures.map(f=>f._lid))].length,
-    analysisReady: false,
-  }), { expirationTtl: TTL });
+  // Helper para ler/escrever incrementalmente em analysis_today
+  const updateAnalysis = async (patch) => {
+    const cur = JSON.parse(await env.CACHE.get('analysis_today') || '{}');
+    Object.assign(cur, patch);
+    await env.CACHE.put('analysis_today', JSON.stringify(cur), { expirationTtl: TTL });
+  };
 
-  if (!allFixtures.length) { console.log('No fixtures today.'); return; }
+  if (group === 'fixtures' || group === 'all') {
+    console.log('Phase 2: Form...');
+    const formData = await fetchTeamForms(allFixtures, season, headers);
+    await updateAnalysis({ formData });
+    if (group === 'fixtures') { console.log('Group "fixtures" done.'); return; }
+  }
 
-  console.log('Phase 2: Form (20 games)...');
-  const formData = await fetchTeamForms(allFixtures, season, headers);
+  if (group === 'h2h-stats' || group === 'all') {
+    console.log('Phase 3: H2H...');
+    const h2hData = await fetchH2HData(allFixtures, headers);
+    await updateAnalysis({ h2hData });
+    console.log('Phase 4: Stats...');
+    const statsData = await fetchTeamStats(allFixtures, season, headers);
+    await updateAnalysis({ statsData });
+    if (group === 'h2h-stats') { console.log('Group "h2h-stats" done.'); return; }
+  }
 
-  console.log('Phase 3: H2H...');
-  const h2hData = await fetchH2HData(allFixtures, headers);
+  if (group === 'standings' || group === 'all') {
+    console.log('Phase 5: Standings...');
+    const standingsData = await fetchStandings(allFixtures, season, headers);
+    await updateAnalysis({ standingsData });
+    console.log('Phase 6: Predictions + Injuries...');
+    const { predData, injData } = await fetchPredictionsAndInjuries(allFixtures, headers);
+    await updateAnalysis({ predData, injData });
+    if (group === 'standings') { console.log('Group "standings" done.'); return; }
+  }
 
-  console.log('Phase 4: Stats...');
-  const statsData = await fetchTeamStats(allFixtures, season, headers);
+  if (group === 'advanced' || group === 'all') {
+    console.log('Phase 7: Advanced stats...');
+    const cur = JSON.parse(await env.CACHE.get('analysis_today') || '{}');
+    const advData = await fetchAdvancedStats(cur.formData || {}, headers);
+    await updateAnalysis({ advData });
+    console.log('Phase 8: Transfers...');
+    const transferData = await fetchTransfers(allFixtures, headers);
+    await updateAnalysis({ transferData });
+    if (group === 'advanced') { console.log('Group "advanced" done.'); return; }
+  }
 
-  console.log('Phase 5: Standings...');
-  const standingsData = await fetchStandings(allFixtures, season, headers);
+  if (group === 'finalize' || group === 'all') {
+    console.log('Phase 9: Lineups...');
+    const lineupData = await fetchLineups(allFixtures, headers);
+    await updateAnalysis({ lineupData });
 
-  console.log('Phase 6: Predictions + Injuries...');
-  const { predData, injData } = await fetchPredictionsAndInjuries(allFixtures, headers);
+    // Phase 10: Calculate tops with full scoring
+    console.log('Phase 10: Scoring + Tops...');
+    const analysis = JSON.parse(await env.CACHE.get('analysis_today') || '{}');
+    const tops = calcTops(allFixtures, allOdds, analysis, season);
+    await env.CACHE.put(`tops_${today}`, JSON.stringify({...tops, date: today}), { expirationTtl: 60 * 60 * 24 * 91 });
+    await env.CACHE.put('tops_today', JSON.stringify(tops), { expirationTtl: TTL });
 
-  console.log('Phase 7: Advanced stats...');
-  const advData = await fetchAdvancedStats(formData, headers);
+    // Phase 11: History
+    console.log('Phase 11: History...');
+    await updateHistory(env, today, headers, season);
 
-  console.log('Phase 8: Transfers...');
-  const transferData = await fetchTransfers(allFixtures, headers);
+    // Marcar como pronto
+    await env.CACHE.put('data_today', JSON.stringify({
+      fixtures: allFixtures, odds: allOdds,
+      fetchedAt: now.toISOString(), today, season,
+      leaguesFetched: [...new Set(allFixtures.map(f=>f._lid))].length,
+      analysisReady: true,
+    }), { expirationTtl: TTL });
 
-  console.log('Phase 9: Lineups (initial)...');
-  const lineupData = await fetchLineups(allFixtures, headers);
-
-  const analysis = { formData, h2hData, statsData, standingsData, predData, injData, advData, transferData, lineupData, refereeData };
-  await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
-
-  // Phase 10: Calculate tops with full scoring
-  console.log('Phase 10: Scoring + Tops...');
-  const tops = calcTops(allFixtures, allOdds, analysis, season);
-  // Guardar tops do dia com data para histórico
-  await env.CACHE.put(`tops_${today}`, JSON.stringify({...tops, date: today}), { expirationTtl: 60 * 60 * 24 * 91 }); // 91 dias
-  await env.CACHE.put('tops_today', JSON.stringify(tops), { expirationTtl: TTL });
-
-  // Phase 11: Verificar resultados de ontem e actualizar histórico
-  console.log('Phase 11: History...');
-  await updateHistory(env, today, headers, season);
-
-  await env.CACHE.put('data_today', JSON.stringify({
-    fixtures: allFixtures, odds: allOdds,
-    fetchedAt: now.toISOString(), today, season,
-    leaguesFetched: [...new Set(allFixtures.map(f=>f._lid))].length,
-    analysisReady: true,
-  }), { expirationTtl: TTL });
-
-  console.log('Cron complete!');
+    console.log('Cron complete!');
+  }
 }
 
 export default {
   async scheduled(event, env, ctx) {
     const hour = new Date(event.scheduledTime).getUTCHours();
-    const isLineupRun = hour === 11 || hour === 16;
-    ctx.waitUntil(runCron(env, isLineupRun));
+    // Mapeamento horas UTC → grupo de fases.
+    // Cron actual: 5, 6, 7, 8, 9, 13, 17 UTC
+    // Análise completa pronta às 9h UTC = 10h Lisboa (verão) / 9h Lisboa (inverno) —
+    // antes dos jogos do final da manhã / início da tarde.
+    // Lineup-refresh às 13h e 17h para apanhar mudanças de lineup mais perto da hora dos jogos.
+    let phaseGroup = 'all', isLineupRun = false;
+    if (hour === 5) phaseGroup = 'fixtures';        // Phase 1+2: fixtures + form
+    else if (hour === 6) phaseGroup = 'h2h-stats';  // Phase 3+4: H2H + stats
+    else if (hour === 7) phaseGroup = 'standings';  // Phase 5+6: standings + pred+inj
+    else if (hour === 8) phaseGroup = 'advanced';   // Phase 7+8: advanced + transfers
+    else if (hour === 9) phaseGroup = 'finalize';   // Phase 9+10+11: lineups + tops + history
+    else if (hour === 13 || hour === 17) isLineupRun = true; // só refresh de lineups
+    ctx.waitUntil(runCron(env, isLineupRun, phaseGroup));
   },
 
   async fetch(request, env, ctx) {
@@ -1039,8 +1097,10 @@ export default {
     }
 
     if (path === '/data/force') {
-      ctx.waitUntil(runCron(env, false));
-      return new Response(JSON.stringify({ status: 'started' }), {
+      // Por defeito faz 'all' (modo antigo). Pode forçar fase específica via ?group=fixtures|h2h-stats|standings|advanced|finalize
+      const group = url.searchParams.get('group') || 'all';
+      ctx.waitUntil(runCron(env, false, group));
+      return new Response(JSON.stringify({ status: 'started', group }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
       });
     }
