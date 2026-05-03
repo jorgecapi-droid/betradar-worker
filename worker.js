@@ -1188,6 +1188,27 @@ export default {
       });
     }
 
+    // Endpoint que corre fetchTeamForms isolado com 3 fixtures de teste, devolve o resultado raw
+    if (path === '/diag2') {
+      const apiKey = env.API_FOOTBALL_KEY;
+      if (!apiKey) return new Response(JSON.stringify({ error: 'no key' }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+      const headers = { 'x-apisports-key': apiKey };
+      const now = new Date();
+      const season = now.getMonth()<7?now.getFullYear()-1:now.getFullYear();
+      const dataRaw = await env.CACHE.get('data_today');
+      if (!dataRaw) return new Response(JSON.stringify({ error: 'no data_today' }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+      const data = JSON.parse(dataRaw);
+      const sampleFixtures = data.fixtures.slice(0, 3);
+      const result = await fetchTeamForms(sampleFixtures, season, headers);
+      return new Response(JSON.stringify({
+        sampleFixtures: sampleFixtures.length,
+        teamsAttempted: sampleFixtures.length * 2,
+        formDataReturned: Object.keys(result).length,
+        formDataKeys: Object.keys(result),
+        formDataSample: result,
+      }, null, 2), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+    }
+
     // Endpoint de diagnóstico: faz uma call real à API com uma fixture conhecida e
     // devolve o resultado raw. Permite ver se o problema é credencial, season,
     // ou um corpo de resposta inesperado.
