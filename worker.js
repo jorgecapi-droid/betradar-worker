@@ -936,9 +936,9 @@ async function runCronInner(env, isLineupRun = false, phaseGroup = null) {
 
   // === Carregar fixtures+odds (sempre necessário ler) ===
   let fixturesData = null;
-  if (group === 'fixtures' || group === 'fixtures-1' || group === 'all') {
-    // Phase 1 só corre na primeira chamada (group=fixtures, fixtures-1, all).
-    // Em fixtures-2 já há fixtures no KV.
+  // Phase 1 só corre para 'fixtures' (full) ou 'all'.
+  // Os sub-grupos 'fixtures-1', 'fixtures-2' usam fixtures já no KV (chama fixtures primeiro!).
+  if (group === 'fixtures' || group === 'all') {
     console.log('Phase 1: Fixtures + Odds...');
     const { allFixtures, allOdds } = await fetchFixturesAndOdds(today, season, headers);
     console.log(`Phase 1: ${allFixtures.length} fixtures, ${allOdds.length} odds`);
@@ -951,22 +951,20 @@ async function runCronInner(env, isLineupRun = false, phaseGroup = null) {
       analysisReady: false,
     }), { expirationTtl: TTL });
     fixturesData = { allFixtures, allOdds, refereeData };
-    // Inicializar analysis_today APENAS se está vazio ou de outro dia.
-    // Senão, preservar o que já lá está (ex: form já populado na 1ª metade).
+    // Inicializar analysis_today APENAS se está vazio ou se é 'all'.
     const existing = await env.CACHE.get('analysis_today');
     if (!existing || group === 'all') {
       const analysis = { formData: {}, h2hData: {}, statsData: {}, standingsData: {}, predData: {}, injData: {}, advData: {}, transferData: {}, lineupData: {}, refereeData };
       await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
     } else {
-      // Actualizar só refereeData
       const cur = JSON.parse(existing);
       cur.refereeData = refereeData;
       await env.CACHE.put('analysis_today', JSON.stringify(cur), { expirationTtl: TTL });
     }
   } else {
-    // Outros grupos — re-usar fixtures já buscados
+    // Outros grupos (incluindo fixtures-1/2) — re-usar fixtures já buscados
     const cached = await env.CACHE.get('data_today');
-    if (!cached) { console.warn(`Group ${group}: data_today not yet populated, skipping`); return; }
+    if (!cached) { console.warn(`Group ${group}: data_today not yet populated — corre /data/force?group=fixtures primeiro`); return; }
     const data = JSON.parse(cached);
     if (!data.fixtures?.length) { console.warn(`Group ${group}: no fixtures, skipping`); return; }
     fixturesData = { allFixtures: data.fixtures, allOdds: data.odds || [], refereeData: extractReferees(data.fixtures) };
