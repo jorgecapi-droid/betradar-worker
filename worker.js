@@ -874,6 +874,30 @@ function calcStreak(days){
 async function runCron(env, isLineupRun = false, phaseGroup = null) {
   const apiKey = env.API_FOOTBALL_KEY;
   if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
+
+  // Lock para impedir runs sobrepostos. Se o lock está activo (< 5 min), abortar.
+  // Isto previne que /data/force?group=X sobreponha um run anterior que ainda não acabou.
+  const lockKey = 'cron_lock';
+  const existingLock = await env.CACHE.get(lockKey);
+  if (existingLock) {
+    const lockTime = parseInt(existingLock);
+    if (Date.now() - lockTime < 5 * 60 * 1000) {
+      console.log(`Cron skipped: another run in progress (started ${Math.round((Date.now()-lockTime)/1000)}s ago)`);
+      return { skipped: true, reason: 'lock active' };
+    }
+  }
+  await env.CACHE.put(lockKey, String(Date.now()), { expirationTtl: 600 }); // expira em 10min
+
+  try {
+    return await runCronInner(env, isLineupRun, phaseGroup);
+  } finally {
+    await env.CACHE.delete(lockKey);
+  }
+}
+
+async function runCronInner(env, isLineupRun = false, phaseGroup = null) {
+  const apiKey = env.API_FOOTBALL_KEY;
+  if (!apiKey) { console.error('API_FOOTBALL_KEY not set'); return; }
   const now = new Date();
   const season = now.getMonth()<7?now.getFullYear()-1:now.getFullYear();
   const today = getBettingDayDate(now, 0);
@@ -1099,6 +1123,15 @@ export default {
     if (path === '/data/force') {
       // Por defeito faz 'all' (modo antigo). Pode forçar fase específica via ?group=fixtures|h2h-stats|standings|advanced|finalize
       const group = url.searchParams.get('group') || 'all';
+      // Verificar lock antes de iniciar — devolver feedback imediato ao user
+      const lockTime = await env.CACHE.get('cron_lock');
+      if (lockTime && (Date.now() - parseInt(lockTime) < 5 * 60 * 1000)) {
+        const ageSec = Math.round((Date.now() - parseInt(lockTime)) / 1000);
+        return new Response(JSON.stringify({
+          status: 'busy',
+          message: `Outro run em curso há ${ageSec}s. Espera mais ${Math.max(0, 180-ageSec)}s antes de tentar.`
+        }), { headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
+      }
       ctx.waitUntil(runCron(env, false, group));
       return new Response(JSON.stringify({ status: 'started', group }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' }
