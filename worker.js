@@ -135,7 +135,7 @@ async function fetchFixturesAndOdds(today, season, headers) {
   return { allFixtures, allOdds };
 }
 
-async function fetchTeamForms(fixtures, season, headers) {
+async function fetchTeamForms(fixtures, season, headers, half = null) {
   const formData = {};
   const teams = new Map();
   fixtures.forEach(f => {
@@ -145,12 +145,15 @@ async function fetchTeamForms(fixtures, season, headers) {
     if (hId && hName) teams.set(hId, { id: hId, name: hName, lid });
     if (aId && aName) teams.set(aId, { id: aId, name: aName, lid });
   });
-  const teamList = [...teams.values()];
-  console.log(`Form for ${teamList.length} teams...`);
+  let teamList = [...teams.values()];
+  // half=1 → primeira metade, half=2 → segunda metade, null → tudo
+  if (half === 1) teamList = teamList.slice(0, Math.ceil(teamList.length / 2));
+  else if (half === 2) teamList = teamList.slice(Math.ceil(teamList.length / 2));
+  console.log(`Form for ${teamList.length} teams (half=${half||'all'})...`);
   let okCount = 0, emptyCount = 0, failCount = 0;
   await batchAll(teamList, async ({ id, name, lid }) => {
     try {
-      const r = await fetch(`${BASE}/fixtures?team=${id}&league=${lid}&season=${season}&last=20&status=FT`, { headers });
+      const r = await fetch(`${BASE}/fixtures?team=${id}&league=${lid}&season=${season}&last=10&status=FT`, { headers });
       if (!r.ok) { failCount++; console.warn(`Form HTTP ${r.status} for ${name} (lid=${lid})`); return; }
       const d = await r.json();
       const fl = d?.response || [];
@@ -933,7 +936,9 @@ async function runCronInner(env, isLineupRun = false, phaseGroup = null) {
 
   // === Carregar fixtures+odds (sempre necessário ler) ===
   let fixturesData = null;
-  if (group === 'fixtures' || group === 'all') {
+  if (group === 'fixtures' || group === 'fixtures-1' || group === 'all') {
+    // Phase 1 só corre na primeira chamada (group=fixtures, fixtures-1, all).
+    // Em fixtures-2 já há fixtures no KV.
     console.log('Phase 1: Fixtures + Odds...');
     const { allFixtures, allOdds } = await fetchFixturesAndOdds(today, season, headers);
     console.log(`Phase 1: ${allFixtures.length} fixtures, ${allOdds.length} odds`);
@@ -946,9 +951,18 @@ async function runCronInner(env, isLineupRun = false, phaseGroup = null) {
       analysisReady: false,
     }), { expirationTtl: TTL });
     fixturesData = { allFixtures, allOdds, refereeData };
-    // Inicializar analysis_today com o que tem agora — outros runs adicionarão a esta blob
-    const analysis = { formData: {}, h2hData: {}, statsData: {}, standingsData: {}, predData: {}, injData: {}, advData: {}, transferData: {}, lineupData: {}, refereeData };
-    await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
+    // Inicializar analysis_today APENAS se está vazio ou de outro dia.
+    // Senão, preservar o que já lá está (ex: form já populado na 1ª metade).
+    const existing = await env.CACHE.get('analysis_today');
+    if (!existing || group === 'all') {
+      const analysis = { formData: {}, h2hData: {}, statsData: {}, standingsData: {}, predData: {}, injData: {}, advData: {}, transferData: {}, lineupData: {}, refereeData };
+      await env.CACHE.put('analysis_today', JSON.stringify(analysis), { expirationTtl: TTL });
+    } else {
+      // Actualizar só refereeData
+      const cur = JSON.parse(existing);
+      cur.refereeData = refereeData;
+      await env.CACHE.put('analysis_today', JSON.stringify(cur), { expirationTtl: TTL });
+    }
   } else {
     // Outros grupos — re-usar fixtures já buscados
     const cached = await env.CACHE.get('data_today');
@@ -959,18 +973,38 @@ async function runCronInner(env, isLineupRun = false, phaseGroup = null) {
   }
   const { allFixtures, allOdds, refereeData } = fixturesData;
 
-  // Helper para ler/escrever incrementalmente em analysis_today
-  const updateAnalysis = async (patch) => {
+  // Helper para ler/escrever incrementalmente em analysis_today.
+  // Para formData usa MERGE (não replace) para não apagar a metade anterior.
+  const updateAnalysis = async (patch, mergeKeys = []) => {
     const cur = JSON.parse(await env.CACHE.get('analysis_today') || '{}');
-    Object.assign(cur, patch);
+    for (const [k, v] of Object.entries(patch)) {
+      if (mergeKeys.includes(k) && cur[k] && typeof cur[k] === 'object') {
+        cur[k] = { ...cur[k], ...v };
+      } else {
+        cur[k] = v;
+      }
+    }
     await env.CACHE.put('analysis_today', JSON.stringify(cur), { expirationTtl: TTL });
   };
 
+  // ── PHASE 2 — FORM (com opção de meio para reduzir CPU)
   if (group === 'fixtures' || group === 'all') {
-    console.log('Phase 2: Form...');
+    console.log('Phase 2: Form (full)...');
     const formData = await fetchTeamForms(allFixtures, season, headers);
     await updateAnalysis({ formData });
     if (group === 'fixtures') { console.log('Group "fixtures" done.'); return; }
+  }
+  if (group === 'fixtures-1') {
+    console.log('Phase 2: Form (1ª metade)...');
+    const formData = await fetchTeamForms(allFixtures, season, headers, 1);
+    await updateAnalysis({ formData }, ['formData']);
+    console.log('Group "fixtures-1" done.'); return;
+  }
+  if (group === 'fixtures-2') {
+    console.log('Phase 2: Form (2ª metade)...');
+    const formData = await fetchTeamForms(allFixtures, season, headers, 2);
+    await updateAnalysis({ formData }, ['formData']);
+    console.log('Group "fixtures-2" done.'); return;
   }
 
   if (group === 'h2h-stats' || group === 'all') {
